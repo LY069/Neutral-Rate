@@ -48,7 +48,7 @@ def estimate(df: pd.DataFrame) -> GoyIwasakiResult:
     Y = d[cols].to_numpy()
     n = len(d)
 
-    SIGMA_MU = 0.10                          # fixed common-trend innovation std
+    SIGMA_MU = 0.02                          # small common-trend innovation -> smooth
     a1 = np.array([float(np.nanmean(Y[:8, 0]))])
     P1 = np.array([[4.0]])
 

@@ -87,10 +87,20 @@ SAMPLE_END = None            # None -> latest available
 #   - a local CSV path with date,value columns           e.g. "data/boj_tankan_1y.csv"
 # Because BoJ surveys are short, a configured series is SPLICED onto the proxy:
 # the survey value is used where available, the proxy fills the earlier history.
-# If a hook is None, the toolkit uses only the proxy: a SHORT (4q MA of core)
-# and a LONG-horizon "anchored" (multi-year MA of core) expectation.
-INFLATION_EXPECTATIONS_SERIES: str | None = None       # short / ~1y expectation
-INFLATION_EXPECTATIONS_LONG_SERIES: str | None = None  # long / ~5-10y expectation
+# If a source is missing/empty/unreachable, the toolkit warns and uses the proxy
+# (a SHORT 4q MA of core, and a LONG-horizon multi-year "anchored" MA of core).
+#
+# PRE-WIRED to the BoJ Tankan "Inflation Outlook of Enterprises" CSVs shipped in
+# data/expectations/ (see that folder's README for how to populate them from the
+# BoJ Time-Series Data Search).  Until you paste in the BoJ data the templates
+# are empty, so the proxy is used automatically.  To fetch live instead, replace
+# a path with a DBnomics code, e.g.:
+#     INFLATION_EXPECTATIONS_LONG_SERIES = "BOJ/TK/CO'..."   # 5y Tankan outlook
+_EXP_DIR = os.path.join(_ROOT, "data", "expectations")
+INFLATION_EXPECTATIONS_SERIES: str | None = os.path.join(   # short / ~1y
+    _EXP_DIR, "japan_infl_exp_1y.csv")
+INFLATION_EXPECTATIONS_LONG_SERIES: str | None = os.path.join(  # long / ~5y
+    _EXP_DIR, "japan_infl_exp_5y.csv")
 INFLATION_EXPECTATION_WINDOW = 4    # quarters in the short (HLW) MA proxy
 INFLATION_EXPECTATION_LONG_WINDOW = 20   # quarters in the long-run anchor proxy
 

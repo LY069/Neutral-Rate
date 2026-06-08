@@ -24,12 +24,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
 
 from ..config import SETTINGS
-from ..kalman import SSM, filter_smooth, loglik
+from ._common import LAM_TREND, trend_growth
 
 
 @dataclass
@@ -39,15 +37,6 @@ class DSGEResult:
     params: dict
 
 
-def _llt_ssm(log_sigma_level: float, log_sigma_slope: float, log_sigma_irr: float):
-    """Local linear trend: state = [level, slope]."""
-    T = np.array([[1.0, 1.0], [0.0, 1.0]])
-    Z = np.array([[1.0, 0.0]])
-    Q = np.diag([np.exp(log_sigma_level) ** 2, np.exp(log_sigma_slope) ** 2])
-    H = np.array([[np.exp(log_sigma_irr) ** 2]])
-    return T, Z, Q, H
-
-
 def estimate(df: pd.DataFrame, rho: float | None = None,
              gamma: float | None = None) -> DSGEResult:
     p = SETTINGS.dsge
@@ -55,33 +44,16 @@ def estimate(df: pd.DataFrame, rho: float | None = None,
     gamma = p.gamma if gamma is None else gamma
 
     series = df["log_cons"].dropna()
-    y = series.to_numpy().reshape(-1, 1)
-    n = len(y)
-    a1 = np.array([y[0, 0], np.mean(np.diff(y[:20, 0])) if n > 20 else 0.5])
-    P1 = np.diag([10.0, 1.0])
-
-    def neg_ll(theta):
-        T, Z, Q, H = _llt_ssm(*theta)
-        ssm = SSM(T=T, Z=Z, Q=Q, H=H, a1=a1.copy(), P1=P1.copy())
-        ll = loglik(y, ssm)
-        return -ll if np.isfinite(ll) else 1e6
-
-    x0 = np.array([np.log(0.3), np.log(0.05), np.log(0.3)])
-    res = minimize(neg_ll, x0, method="Nelder-Mead",
-                   options={"maxiter": 1500, "xatol": 1e-4, "fatol": 1e-4})
-    T, Z, Q, H = _llt_ssm(*res.x)
-    ssm = SSM(T=T, Z=Z, Q=Q, H=H, a1=a1.copy(), P1=P1.copy())
-    sm = filter_smooth(y, ssm)["smoothed"]
-
-    slope_q = sm[:, 1]                 # quarterly trend growth (100*log units)
-    g_c = 4.0 * slope_q                # annualized %
+    # Trend per-capita consumption growth from a Kalman local-linear-trend with a
+    # low signal-to-noise (the stochastic-trend mechanism Okazaki-Sudo estimate
+    # in their DSGE).  In the steady state r* = rho + gamma * g_c, with g_c slow.
+    g_c = trend_growth(series, LAM_TREND)        # annualized %, very smooth
     r_star = rho + gamma * g_c
 
     idx = series.index
     params = {
         "rho": rho, "gamma": gamma, "per_capita": p.per_capita,
-        "sigma_level": np.exp(res.x[0]), "sigma_slope": np.exp(res.x[1]),
-        "sigma_irregular": np.exp(res.x[2]),
+        "lambda_trend": LAM_TREND,
     }
     return DSGEResult(
         r_star=pd.Series(r_star, index=idx, name="DSGE"),

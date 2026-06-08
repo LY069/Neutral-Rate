@@ -247,12 +247,25 @@ therefore offers **two tiers**, and is explicit about which is which:
 
 | Method | **Python (faithful)** | **Excel (transparent proxy)** |
 |---|---|---|
-| HLW | Full 9-state IS+Phillips Kalman filter, MLE; trend variances fixed (LW pile-up remedy); **long-run-neutrality level anchor** (sample-avg r\* = sample-avg real policy rate) | `0.5·trend-growth + 0.5·trend-real-rate` |
-| DSGE | Consumption-Euler `r*=ρ+γg_c`, trend `g_c` via local-linear-trend MLE | same Euler formula, `g_c` via moving average — *near-exact* |
-| Imakubo NYC | IS-curve state space; natural level = RW identified from yield-curve gap | trailing trend of the real-curve midpoint |
-| Nakajima NYC | growth-anchored `r*=g+z`, `z` from yield-curve gap (Kalman) | `0.5·trend-growth + 0.5·curve-level` |
-| Goy–Iwasaki | common stochastic trend of {short, long, growth} (Kalman) | average of the three trends |
-| Del Negro VAR | 2-common-trend + AR(1)-cycle state space, MLE | `0.7·trend-real-rate + 0.3·trend-growth` |
+| HLW | 9-state IS+Phillips Kalman filter (MLE); LW low signal-to-noise (small fixed trend-shock variances); **long-run-neutrality level anchor** | `0.5·trend-growth + 0.5·trend-real-rate` |
+| DSGE | Consumption-Euler `r*=ρ+γg_c`; `g_c` = Kalman local-linear-trend of consumption, low signal-to-noise | same Euler formula, `g_c` via moving average — *near-exact* |
+| Imakubo NYC | **Same LW state space as HLW** but the IS curve uses a real *yield-curve* summary; r*=4cg+z (short end of the natural curve) | trailing trend of the real-curve midpoint |
+| Nakajima NYC | LW state space with the yield curve, **tighter growth anchor** (smaller z variance) | `0.5·trend-growth + 0.5·curve-level` |
+| Goy–Iwasaki | common stochastic trend of {short, long, growth} (Kalman), small trend variance | average of the three trends |
+| Del Negro VAR | 2-common-trend + AR(1)-cycle state space (MLE), small trend variance | `0.7·trend-real-rate + 0.3·trend-growth` |
+
+**On smoothing — consistent with the originals.** None of the source papers use
+an HP filter; they all get a smooth r\* from **state-space stochastic trends with
+a low signal-to-noise ratio** (small trend-shock variances relative to the
+cyclical shocks). This toolkit does the same: HLW/Imakubo/Nakajima share one
+Laubach-Williams state space (the natural-yield-curve methods are explicit
+LW extensions, with the yield curve entering the IS curve); the DSGE trend
+growth and the macro-finance/common-trend methods use Kalman trends with the
+same small trend variances. We *fix* that signal-to-noise (rather than estimate
+it via Stock-Watson median-unbiased, as HLW do) to reproduce the papers' smooth
+r\* and avoid the pile-up problem — note that an HP filter with parameter λ is
+exactly the Kalman smoother of this trend-plus-noise model, so the choice is one
+of estimating vs. fixing the same ratio, not of a different mechanism.
 
 The Python implementations are the ones to cite as replications; the Excel proxies
 are for transparent, refreshable monitoring and recompute live as data arrive. The
@@ -261,12 +274,24 @@ See **`docs/02_update_manual.md`** to refresh and re-run both.
 
 ---
 
-## 6. Why this toolkit's *range* is wider than BoJ's — a diagnosis
+## 6. Matching BoJ — volatility and the cross-method range
 
-BoJ's published Chart 3 (file `rev26e04b.xlsx`) puts the six methods in a fairly
-tight band — latest (2025Q3) roughly **−0.93% (Goy–Iwasaki) to +0.53%
-(Nakajima)**, width ≈ **1.5 pp**. This toolkit's band on the bundled data is
-**wider (≈ 3 pp)**. The difference is almost entirely explained, in order of
+BoJ's published Chart 3 (file `rev26e04b.xlsx`) has two notable features: r\* is
+very **smooth** (quarter-on-quarter std ≈ 0.04–0.15 pp), and the six methods sit
+in a fairly **tight band** (latest 2025Q3 ≈ **−0.93% Goy–Iwasaki to +0.53%
+Nakajima**, width ≈ 1.5 pp).
+
+**Volatility — now matched.** Early versions of this toolkit were far too
+volatile (qoq std ≈ 0.25 pp). The cause was under-smoothing: cyclical movement
+was leaking into the trend. The fix — described in §5 — was to extract every
+trend the way the original papers do, via **state-space stochastic trends with a
+low signal-to-noise ratio** (small trend-shock variances). After that change the
+qoq std falls to ≈ **0.01–0.03 pp**, i.e. at or below BoJ's own smoothness, and
+the business cycle is correctly held in the transitory component. (We chose
+*fixed* small trend variances rather than the HP filter or MLE; an HP filter is
+exactly the Kalman smoother of this model, and MLE suffers the pile-up problem.)
+
+**The remaining range gap (≈ 2.5 pp vs BoJ's 1.5 pp)** is explained, in order of
 importance, by **data → data-handling → modeling** — not by a flaw in any one
 method:
 

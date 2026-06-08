@@ -1,52 +1,65 @@
-"""Shared trend-extraction helpers for the term-structure / common-trend methods."""
+"""
+Shared trend-extraction for the methods that need a univariate stochastic trend
+(the DSGE's trend consumption growth and the macro-finance trend growth input).
+
+The natural rate is a slow-moving object, so - exactly as in the original
+state-space papers - the trend is a local-linear-trend (I(2)) estimated by the
+Kalman smoother with a *low signal-to-noise ratio* (small slope-shock variance
+relative to the measurement variance).  That low signal-to-noise is what makes
+r* smooth in HLW/Imakubo/Nakajima/Del Negro, and we reproduce it here rather
+than bolting on a separate (HP) smoother.  The smoothness knob ``lam`` is the
+ratio sigma_irregular^2 / sigma_slope^2 (numerically the Hodrick-Prescott
+parameter, since HP is precisely the Kalman smoother of this model).
+"""
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
 
-from ..kalman import SSM, filter_smooth, loglik
+from ..kalman import SSM, filter_smooth
 
-_LLT_CACHE: dict = {}
+# Signal-to-noise (quarterly).  1600 = business-cycle trend; the large value
+# gives the very smooth *secular* growth trend that anchors r*.
+LAM_GAP = 1600.0
+LAM_TREND = 1.0e5
 
 
-def llt_decompose(series: pd.Series):
-    """Local-linear-trend decomposition of a (100*log) series.
+def llt_decompose(series: pd.Series, lam: float = LAM_TREND):
+    """Kalman local-linear-trend smoother of a series.
 
-    Returns (level, slope_quarterly) aligned to ``series.index``.
-    Memoized so methods that share an input (output gap) don't re-estimate it.
+    state = [level, slope];  level is I(2) (no own shock), slope ~ random walk
+    with variance 1, measurement variance = lam (so the trend-to-noise ratio is
+    1/lam).  Returns (level, slope_quarterly) aligned to ``series.index``.
     """
     s = series.dropna()
-    key = (round(float(s.iloc[0]), 6), round(float(s.iloc[-1]), 6), len(s))
-    if key in _LLT_CACHE:
-        return _LLT_CACHE[key]
-    y = s.to_numpy().reshape(-1, 1)
+    y = s.to_numpy(dtype=float).reshape(-1, 1)
     n = len(y)
-    a1 = np.array([y[0, 0], np.mean(np.diff(y[:20, 0])) if n > 20 else 0.5])
-    P1 = np.diag([10.0, 1.0])
+    if n < 5:
+        return s.copy(), s.diff().bfill()
+    T = np.array([[1.0, 1.0], [0.0, 1.0]])
+    Z = np.array([[1.0, 0.0]])
+    Q = np.diag([0.0, 1.0])                 # sigma_level=0, sigma_slope=1
+    H = np.array([[float(lam)]])            # sigma_irregular^2 = lam
+    a1 = np.array([y[0, 0], float(np.mean(np.diff(y[:8, 0]))) if n > 8 else 0.0])
+    P1 = np.diag([1e6, 1e6])
+    sm = filter_smooth(y, SSM(T=T, Z=Z, Q=Q, H=H, a1=a1, P1=P1))["smoothed"]
+    return (pd.Series(sm[:, 0], index=s.index),
+            pd.Series(sm[:, 1], index=s.index))
 
-    def ssm(theta):
-        T = np.array([[1.0, 1.0], [0.0, 1.0]])
-        Z = np.array([[1.0, 0.0]])
-        Q = np.diag([np.exp(theta[0]) ** 2, np.exp(theta[1]) ** 2])
-        H = np.array([[np.exp(theta[2]) ** 2]])
-        return SSM(T=T, Z=Z, Q=Q, H=H, a1=a1.copy(), P1=P1.copy())
 
-    def neg_ll(theta):
-        ll = loglik(y, ssm(theta))
-        return -ll if np.isfinite(ll) else 1e6
-
-    res = minimize(neg_ll, np.array([np.log(0.3), np.log(0.05), np.log(0.3)]),
-                   method="Nelder-Mead", options={"maxiter": 800})
-    sm = filter_smooth(y, ssm(res.x))["smoothed"]
-    out = (pd.Series(sm[:, 0], index=s.index),
-           pd.Series(sm[:, 1], index=s.index))
-    _LLT_CACHE[key] = out
-    return out
+def trend_growth(log_series: pd.Series, lam: float = LAM_TREND) -> pd.Series:
+    """Annualized %, very smooth secular trend growth (4 * quarterly slope)."""
+    _, slope = llt_decompose(log_series, lam)
+    return 4.0 * slope
 
 
 def output_gap(log_gdp: pd.Series):
-    """Return (output_gap %, annualized trend growth %)."""
-    level, slope = llt_decompose(log_gdp)
-    gap = (log_gdp.reindex(level.index) - level)
-    return gap, 4.0 * slope
+    """Return (output_gap %, annualized secular trend growth %).
+
+    Gap uses a business-cycle trend (LAM_GAP); trend growth uses the much
+    smoother secular trend (LAM_TREND) - the object that anchors r*.
+    """
+    s = log_gdp.dropna()
+    level_bc, _ = llt_decompose(s, LAM_GAP)
+    gap = s.reindex(level_bc.index) - level_bc
+    return gap, trend_growth(s, LAM_TREND)

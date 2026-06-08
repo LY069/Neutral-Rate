@@ -56,7 +56,7 @@ def estimate(df: pd.DataFrame) -> DelNegroResult:
                    0.0, 0.0, 0.0])
     P1 = np.diag([25.0, 25.0, 10.0, 10.0, 10.0])
 
-    SIGMA_F = 0.10          # fixed common-trend innovation std (pile-up remedy)
+    SIGMA_F = 0.07          # common-trend innovation std (smooth but not flat)
 
     def build(theta):
         phi, c_g, c_pi = theta[:3]

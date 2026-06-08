@@ -182,14 +182,23 @@ def fetch_raw_panel() -> pd.DataFrame:
     for logical, fred_id in FRED_SERIES.items():
         raw = fetch_series(fred_id)
         cols[logical] = _to_quarterly(raw, logical)
-    # optional dedicated survey expectation series (FRED / DBnomics / CSV)
-    if INFLATION_EXPECTATIONS_SERIES:
-        raw = fetch_expectations(INFLATION_EXPECTATIONS_SERIES)
-        cols["inflation_expectations"] = _to_quarterly(raw, "inflation_expectations")
-    if INFLATION_EXPECTATIONS_LONG_SERIES:
-        raw = fetch_expectations(INFLATION_EXPECTATIONS_LONG_SERIES)
-        cols["inflation_expectations_long"] = _to_quarterly(
-            raw, "inflation_expectations_long")
+    # optional dedicated survey expectation series (FRED / DBnomics / CSV).
+    # Missing/empty/unreachable -> warn once and fall back to the proxy.
+    def _try_expectations(spec, name):
+        if not spec:
+            return
+        try:
+            s = fetch_expectations(spec)
+            if s is None or not s.notna().any():
+                print(f"[neutralrate] {name}: source '{spec}' is empty; using proxy.")
+                return
+            cols[name] = _to_quarterly(s, name)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[neutralrate] {name}: source '{spec}' unavailable "
+                  f"({exc}); using proxy.")
+
+    _try_expectations(INFLATION_EXPECTATIONS_SERIES, "inflation_expectations")
+    _try_expectations(INFLATION_EXPECTATIONS_LONG_SERIES, "inflation_expectations_long")
     panel = pd.DataFrame(cols)
     if SAMPLE_END:
         panel = panel.loc[:SAMPLE_END]
