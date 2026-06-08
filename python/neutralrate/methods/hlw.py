@@ -11,9 +11,10 @@ workhorse behind the BOJ survey's "LW/HLW" estimates.  Three building blocks:
                     z all follow random walks, with   r* = 4*c*g + z.
 
 The system is cast in linear-Gaussian state-space form and estimated by maximum
-likelihood (Kalman filter) over the regression coefficients and the innovation
-variances.  Estimated parameters are returned so the Excel workbook can re-run
-the identical Kalman recursion in-sheet.
+likelihood (Kalman filter) over the regression coefficients, with the trend
+innovation variances fixed (the Laubach-Williams remedy for the pile-up
+problem).  The level of r* is then pinned by a long-run-neutrality anchor (see
+``estimate``).  Estimated parameters are returned for reference / the workbook.
 
 State vector (9):
     [y*_t, y*_{t-1}, y*_{t-2}, g_t, g_{t-1}, g_{t-2}, z_t, z_{t-1}, z_{t-2}]
@@ -43,7 +44,7 @@ class HLWResult:
 # Laubach-Williams remedy for the "pile-up" problem (MLE drives these to 0 or
 # explodes).  Small values impose smooth, well-identified r* trends.
 SIGMA_G = 0.08      # trend-growth innovation (quarterly, 100*log units)
-SIGMA_Z = 0.15      # other-factor innovation (annualized %)
+SIGMA_Z = 0.08      # other-factor innovation (annualized %) - smoother z
 
 
 def _build_ssm(theta: np.ndarray, c: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -51,20 +52,23 @@ def _build_ssm(theta: np.ndarray, c: float) -> tuple[np.ndarray, np.ndarray, np.
     s_yp, s_e1, s_e2 = np.exp(theta[5:8])  # estimated std devs (positive)
     s_g, s_z = SIGMA_G, SIGMA_Z
 
+    # State (after transition to t):
+    #   [y*_t, y*_{t-1}, y*_{t-2}, g_t, g_{t-1}, g_{t-2}, z_t, z_{t-1}, z_{t-2}]
+    # old state holds the t-1 values, so e.g. old_s0 = y*_{t-1}, old_s3 = g_{t-1}.
     m = 9
     T = np.zeros((m, m))
     # y*_t = y*_{t-1} + g_{t-1}
-    T[0, 1] = 1.0
-    T[0, 4] = 1.0
+    T[0, 0] = 1.0
+    T[0, 3] = 1.0
     # lags of y*
     T[1, 0] = 1.0
     T[2, 1] = 1.0
-    # g_t = g_{t-1}
-    T[3, 4] = 1.0
+    # g_t = g_{t-1} (random walk) + lag shifts
+    T[3, 3] = 1.0
     T[4, 3] = 1.0
     T[5, 4] = 1.0
-    # z_t = z_{t-1}
-    T[6, 7] = 1.0
+    # z_t = z_{t-1} (random walk) + lag shifts
+    T[6, 6] = 1.0
     T[7, 6] = 1.0
     T[8, 7] = 1.0
 
@@ -73,15 +77,15 @@ def _build_ssm(theta: np.ndarray, c: float) -> tuple[np.ndarray, np.ndarray, np.
     Q[3, 3] = s_g ** 2       # trend-growth innovation
     Q[6, 6] = s_z ** 2       # other-factor innovation
 
-    # Measurement loadings (see module docstring for the algebra)
+    # Measurement loadings (see module docstring for the algebra).  The IS curve
+    # uses a single real-rate lag (r_{t-1}-r*_{t-1}); a symmetric two-lag average
+    # induces a spurious 2-quarter oscillation in the smoothed z.
     Z = np.zeros((2, m))
     Z[0, 0] = 1.0
     Z[0, 1] = -a1
     Z[0, 2] = -a2
-    Z[0, 4] = 2.0 * a_r * c   # (a_r/2)*4c on g_{t-1}
-    Z[0, 5] = 2.0 * a_r * c
-    Z[0, 7] = a_r / 2.0       # on z_{t-1}
-    Z[0, 8] = a_r / 2.0
+    Z[0, 4] = 4.0 * a_r * c   # a_r*4c on g_{t-1}
+    Z[0, 7] = a_r             # a_r on z_{t-1}
     Z[1, 1] = -b_y
     H = np.diag([s_e1 ** 2, s_e2 ** 2])
     return T, Z, Q, H
@@ -101,7 +105,16 @@ def _prep(df: pd.DataFrame):
 
 
 def estimate(df: pd.DataFrame, c: float | None = None,
-             restarts: int = 2, seed: int = 0) -> HLWResult:
+             restarts: int = 2, seed: int = 0,
+             anchor_level: bool = True) -> HLWResult:
+    """Estimate HLW r*.
+
+    anchor_level : if True (default), apply the standard long-run-neutrality
+        calibration - shift the level of the other-factor z so that the
+        sample-average r* equals the sample-average ex-ante real policy rate
+        (i.e. policy is neutral on average over the full sample).  This pins the
+        otherwise weakly-identified *level* of r* without altering its dynamics.
+    """
     c = SETTINGS.hlw.c_param if c is None else c
     d, y, pi, r, pi_bar, n = _prep(df)
 
@@ -109,8 +122,7 @@ def estimate(df: pd.DataFrame, c: float | None = None,
     # Vectorized for speed (called once per likelihood evaluation).
     def make_yadj(a1, a2, a_r, b_pi, b_y):
         yadj = np.full((n, 2), np.nan)
-        yadj[2:, 0] = y[2:] - (a1 * y[1:-1] + a2 * y[:-2]
-                               - (a_r / 2.0) * (r[1:-1] + r[:-2]))
+        yadj[2:, 0] = y[2:] - (a1 * y[1:-1] + a2 * y[:-2] - a_r * r[1:-1])
         yadj[4:, 1] = pi[4:] - (b_pi * pi[3:-1] + (1 - b_pi) * pi_bar[4:]
                                 + b_y * y[3:-1])
         return yadj
@@ -176,6 +188,14 @@ def estimate(df: pd.DataFrame, c: float | None = None,
     r_star = 4.0 * c * g_t + z_t
     gap = y - yp
 
+    # Long-run-neutrality level calibration: on average over the full sample the
+    # economy is at potential, so the average real policy rate should equal r*.
+    level_shift = 0.0
+    if anchor_level:
+        level_shift = float(np.nanmean(r) - np.nanmean(r_star))
+        r_star = r_star + level_shift
+        z_t = z_t + level_shift
+
     idx = d.index
     s_yp, s_e1, s_e2 = np.exp(theta[5:8])
     s_g, s_z = SIGMA_G, SIGMA_Z
@@ -183,6 +203,7 @@ def estimate(df: pd.DataFrame, c: float | None = None,
         "a_y1": a1c, "a_y2": a2c, "a_r": a_r, "b_pi": b_pi, "b_y": b_y, "c": c,
         "sigma_ystar": s_yp, "sigma_g": s_g, "sigma_z": s_z,
         "sigma_ygap": s_e1, "sigma_pi": s_e2,
+        "level_shift": level_shift,
     }
     return HLWResult(
         r_star=pd.Series(r_star, index=idx, name="HLW"),

@@ -28,6 +28,7 @@ import requests
 from .config import (
     FRED_SERIES,
     INFLATION_EXPECTATION_WINDOW,
+    INFLATION_EXPECTATIONS_SERIES,
     SAMPLE_END,
     SAMPLE_START,
     SETTINGS,
@@ -46,6 +47,8 @@ AGG_RULE: dict[str, str] = {
     "rate_3m": "mean",
     "rate_10y": "mean",
     "cpi": "mean",
+    "core_cpi_yoy": "mean",
+    "inflation_expectations": "mean",
     "working_age_pop": "mean",
 }
 
@@ -129,6 +132,10 @@ def fetch_raw_panel() -> pd.DataFrame:
     for logical, fred_id in FRED_SERIES.items():
         raw = fetch_series(fred_id)
         cols[logical] = _to_quarterly(raw, logical)
+    # optional dedicated inflation-expectations / breakeven series
+    if INFLATION_EXPECTATIONS_SERIES:
+        raw = fetch_series(INFLATION_EXPECTATIONS_SERIES)
+        cols["inflation_expectations"] = _to_quarterly(raw, "inflation_expectations")
     panel = pd.DataFrame(cols)
     if SAMPLE_END:
         panel = panel.loc[:SAMPLE_END]
@@ -166,13 +173,25 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     df["gdp_growth"] = 4.0 * df["log_gdp"].diff()
     df["cons_growth"] = 4.0 * df["log_cons"].diff()
 
-    # CPI inflation
-    log_cpi = 100.0 * np.log(df["cpi"])
-    df["inflation"] = 4.0 * log_cpi.diff()
-    df["inflation_yoy"] = log_cpi.diff(4)
-    df["exp_inflation"] = (
-        df["inflation"].rolling(INFLATION_EXPECTATION_WINDOW, min_periods=1).mean()
-    )
+    # Inflation.  Prefer the OECD core (ex food & energy) YoY series - the
+    # HLW-appropriate measure - and fall back to all-items CPI when absent
+    # (e.g. the offline synthetic sample or a re-pointed config).
+    if "core_cpi_yoy" in df and df["core_cpi_yoy"].notna().any():
+        df["inflation"] = df["core_cpi_yoy"]            # already YoY %
+        df["inflation_yoy"] = df["core_cpi_yoy"]
+    else:
+        log_cpi = 100.0 * np.log(df["cpi"])
+        df["inflation"] = 4.0 * log_cpi.diff()
+        df["inflation_yoy"] = log_cpi.diff(4)
+
+    # Expected inflation: a dedicated FRED series if one is configured,
+    # otherwise the HLW moving-average-of-core-inflation adaptive proxy.
+    if "inflation_expectations" in df and df["inflation_expectations"].notna().any():
+        df["exp_inflation"] = df["inflation_expectations"]
+    else:
+        df["exp_inflation"] = (
+            df["inflation"].rolling(INFLATION_EXPECTATION_WINDOW, min_periods=1).mean()
+        )
 
     # ex-ante real rates
     df["real_short_rate"] = df["short_rate"] - df["exp_inflation"]

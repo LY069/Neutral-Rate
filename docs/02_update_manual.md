@@ -126,11 +126,19 @@ Set this up once and thereafter just press **Data ▸ Refresh All**.
 |---|---|
 | `real_gdp` | `JPNRGDPEXP` |
 | `consumption` | `JPNPFCEQDSMEI` |
-| `cpi` | `JPNCPIALLMINMEI` |
+| `core_cpi_yoy` (core CPI, YoY %) | `CPGRLE01JPQ657N` |
+| `cpi` (all-items, fallback) | `JPNCPIALLMINMEI` |
 | `short_rate` | `IRSTCI01JPM156N` |
 | `rate_3m` | `IR3TIB01JPM156N` |
 | `rate_10y` | `IRLTLT01JPM156N` |
 | `working_age_pop` | `LFWA64TTJPM647S` |
+
+> **Inflation expectations.** The models use a moving average of **core** CPI
+> inflation (`CPGRLE01JPQ657N`) as the expected-inflation proxy, following
+> Holston-Laubach-Williams — FRED has no clean percentage Japan
+> inflation-expectations series. If you have one (e.g. a JGB breakeven or
+> Consensus series), set its FRED id in `INFLATION_EXPECTATIONS_SERIES`
+> (in `python/neutralrate/config.py`) and it will be fetched and used directly.
 
 > Monthly series (`cpi`, the three interest rates, `working_age_pop`) must be
 > aggregated to **quarterly averages** to match the GDP frequency. The automated

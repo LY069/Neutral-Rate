@@ -45,10 +45,10 @@ DEFAULT_WINDOW = 20
 
 # Order of columns written to the Data sheet (logical feature names).
 DATA_COLS = [
-    "real_gdp", "consumption", "cpi", "short_rate", "rate_3m", "rate_10y",
-    "working_age_pop", "log_gdp", "log_cons", "gdp_growth", "cons_growth",
-    "inflation", "inflation_yoy", "exp_inflation", "real_short_rate",
-    "real_10y", "real_3m",
+    "real_gdp", "consumption", "cpi", "core_cpi_yoy", "short_rate", "rate_3m",
+    "rate_10y", "working_age_pop", "log_gdp", "log_cons", "gdp_growth",
+    "cons_growth", "inflation", "inflation_yoy", "exp_inflation",
+    "real_short_rate", "real_10y", "real_3m",
 ]
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
@@ -167,6 +167,11 @@ def _populate_data_sheet(ws, features: pd.DataFrame):
         cell.alignment = Alignment(horizontal="center", wrap_text=True)
     ws.freeze_panes = "B2"
     ws.column_dimensions["A"].width = 12
+
+    # Point the Settings "avg term spread" cell at the (dynamically located)
+    # term_premium column, so it stays correct if the Data layout changes.
+    if "Settings" in ws.parent.sheetnames:
+        ws.parent["Settings"]["B5"] = f"=AVERAGE(Data!${c_tp}$2:${c_tp}${n + 1})"
     return comp, n
 
 
@@ -186,7 +191,7 @@ def _build_settings(ws, features: pd.DataFrame):
          "Trailing window baked into the trend columns (rebuild to change)"),
         ("rho (DSGE, %)", 0.0, "Rate of time preference / steady-state premium"),
         ("gamma (DSGE)", 1.0, "Inverse EIS (1 = log utility)"),
-        ("avg real term spread", "=AVERAGE(Data!$S$2:$S$1000)",
+        ("avg real term spread", 0.0,   # set by _populate_data_sheet (dynamic col)
          "Average real 10y-short spread; used to level-adjust the long rate"),
     ]
     for i, (label, val, note) in enumerate(rows, start=1):

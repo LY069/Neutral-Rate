@@ -189,11 +189,21 @@ The single most useful artifact: **what each model actually consumes and produce
 |---|---|---|
 | Real GDP | `JPNRGDPEXP` | all (output gap / growth) |
 | Private consumption | `JPNPFCEQDSMEI` | DSGE |
-| CPI (→ core-ish YoY) | `JPNCPIALLMINMEI` | inflation, real rates |
+| **Core CPI, YoY %** (ex food & energy) | `CPGRLE01JPQ657N` | inflation, expectations, real rates |
+| CPI all-items (fallback) | `JPNCPIALLMINMEI` | inflation if core unavailable |
 | Call/interbank rate (policy) | `IRSTCI01JPM156N` | short real rate |
 | 3-month rate | `IR3TIB01JPM156N` | curve short end |
 | 10-year JGB yield | `IRLTLT01JPM156N` | curve long end |
 | Working-age population | `LFWA64TTJPM647S` | per-capita / demographics |
+
+**Inflation expectations.** FRED carries no clean, long-history,
+percentage-valued Japan inflation-expectations series — Japan breakeven (BEI)
+rates are distorted by deflation-option and liquidity premia (BOJ WP 20-E-5),
+and the Cleveland-Fed `EXPINF` series are US-only. Following Holston-Laubach-
+Williams, expected inflation is therefore built as a moving average of **core**
+CPI inflation (the adaptive-expectations proxy). The toolkit also exposes a
+config hook (`INFLATION_EXPECTATIONS_SERIES`) so a user with access to a
+percentage breakeven/Consensus series can drop it in and use it directly.
 
 ---
 
@@ -226,7 +236,7 @@ therefore offers **two tiers**, and is explicit about which is which:
 
 | Method | **Python (faithful)** | **Excel (transparent proxy)** |
 |---|---|---|
-| HLW | Full 9-state IS+Phillips Kalman filter, MLE | `0.5·trend-growth + 0.5·trend-real-rate` |
+| HLW | Full 9-state IS+Phillips Kalman filter, MLE; trend variances fixed (LW pile-up remedy); **long-run-neutrality level anchor** (sample-avg r\* = sample-avg real policy rate) | `0.5·trend-growth + 0.5·trend-real-rate` |
 | DSGE | Consumption-Euler `r*=ρ+γg_c`, trend `g_c` via local-linear-trend MLE | same Euler formula, `g_c` via moving average — *near-exact* |
 | Imakubo NYC | IS-curve state space; natural level = RW identified from yield-curve gap | trailing trend of the real-curve midpoint |
 | Nakajima NYC | growth-anchored `r*=g+z`, `z` from yield-curve gap (Kalman) | `0.5·trend-growth + 0.5·curve-level` |

@@ -68,8 +68,11 @@ long-run *decline*. Read the **range**, not a single number.
 
 ## Data
 
-All inputs are public FRED series (Japan): real GDP, private consumption, CPI,
-call/3-month/10-year rates, working-age population. See
+All inputs are public FRED series (Japan): real GDP, private consumption, **core
+CPI** (`CPGRLE01JPQ657N`, the HLW-appropriate inflation input), call/3-month/
+10-year rates, working-age population. Expected inflation follows HLW (a moving
+average of core inflation); a config hook (`INFLATION_EXPECTATIONS_SERIES`) lets
+you drop in a real breakeven/Consensus series if you have one. See
 `python/neutralrate/config.py` for the catalog and how to re-point any series.
 
 > The bundled `data/sample/` panel is **synthetic** (deterministic stand-in) so

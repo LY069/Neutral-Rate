@@ -42,6 +42,8 @@ def build() -> pd.DataFrame:
             np.where(yrs < 37, 0.6, 2.6))))
     infl = infl + rng.normal(0, 0.3, n)
     cpi = 60.0 * np.exp(np.cumsum(infl / 4.0 / 100.0))
+    # Synthetic "core CPI YoY %" (smoother, ex food&energy): 4q-smoothed infl.
+    core_cpi_yoy = pd.Series(infl).rolling(4, min_periods=1).mean().to_numpy()
 
     # Policy / call rate: high late-80s, ZIRP from ~1999, NIRP 2016-2024.
     call = np.where(yrs < 6, 6.0 - 0.4 * yrs,
@@ -62,6 +64,7 @@ def build() -> pd.DataFrame:
         "real_gdp": real_gdp,
         "consumption": consumption,
         "cpi": cpi,
+        "core_cpi_yoy": core_cpi_yoy,
         "short_rate": call,
         "rate_3m": rate_3m,
         "rate_10y": rate_10y,

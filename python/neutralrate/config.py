@@ -34,7 +34,9 @@ FRED_SERIES: dict[str, str] = {
     "real_gdp": "JPNRGDPEXP",          # Real GDP for Japan, SA, bn chained yen
     "consumption": "JPNPFCEQDSMEI",    # Private final consumption expenditure
     # --- Prices (monthly -> quarterly) -------------------------------------
-    "cpi": "JPNCPIALLMINMEI",          # CPI, all items, index (for YoY core-ish)
+    "cpi": "JPNCPIALLMINMEI",          # CPI, all items, index (fallback)
+    "core_cpi_yoy": "CPGRLE01JPQ657N",  # Core CPI (ex food & energy), YoY %, Q
+                                        # OECD - the HLW-appropriate inflation input
     # --- Interest rates (monthly -> quarterly averages) --------------------
     "short_rate": "IRSTCI01JPM156N",   # Call money / interbank, < 24h  (policy)
     "rate_3m": "IR3TIB01JPM156N",      # 3-month interbank rate
@@ -58,9 +60,16 @@ TARGET_FREQ = "QS"          # quarter start; pandas offset alias
 SAMPLE_START = "1985-01-01"  # estimation start (data trimmed to availability)
 SAMPLE_END = None            # None -> latest available
 
-# Inflation: number of quarters used to build the trailing expected-inflation
-# proxy (HLW use a 4-quarter average of core inflation).
-INFLATION_EXPECTATION_WINDOW = 4
+# Inflation expectations.
+# FRED carries no clean, long-history, percentage-valued Japan inflation-
+# expectations series (Japan breakeven rates are distorted by deflation-option
+# and liquidity premia - see BOJ WP 20-E-5; the Cleveland Fed EXPINF series is
+# US-only).  We therefore follow Holston-Laubach-Williams and build expected
+# inflation as a moving average of *core* CPI inflation (the adaptive-
+# expectations proxy).  If you DO have access to a percentage expectations or
+# breakeven series on FRED, set its id here and it will be used directly.
+INFLATION_EXPECTATIONS_SERIES: str | None = None   # e.g. a JGB breakeven id
+INFLATION_EXPECTATION_WINDOW = 4   # quarters in the core-inflation MA proxy
 
 
 # --------------------------------------------------------------------------- #
