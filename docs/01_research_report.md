@@ -196,14 +196,25 @@ The single most useful artifact: **what each model actually consumes and produce
 | 10-year JGB yield | `IRLTLT01JPM156N` | curve long end |
 | Working-age population | `LFWA64TTJPM647S` | per-capita / demographics |
 
-**Inflation expectations.** FRED carries no clean, long-history,
-percentage-valued Japan inflation-expectations series — Japan breakeven (BEI)
-rates are distorted by deflation-option and liquidity premia (BOJ WP 20-E-5),
-and the Cleveland-Fed `EXPINF` series are US-only. Following Holston-Laubach-
-Williams, expected inflation is therefore built as a moving average of **core**
-CPI inflation (the adaptive-expectations proxy). The toolkit also exposes a
-config hook (`INFLATION_EXPECTATIONS_SERIES`) so a user with access to a
-percentage breakeven/Consensus series can drop it in and use it directly.
+**Inflation expectations — handled three ways, matching the originals.** This is
+a genuine point of difference across the methods, not a detail:
+
+| Method(s) | Expectations treatment |
+|---|---|
+| **HLW** | adaptive / backward-looking: a 4-quarter MA of core inflation |
+| **DSGE (Okazaki–Sudo)** | model-consistent **rational expectations** (no external series) |
+| **Imakubo, Nakajima, Goy–Iwasaki, Del Negro** | **survey-based**, maturity-specific, used to deflate the nominal yield curve (Consensus Forecasts in Japan; long-run SPF in Del Negro) |
+
+FRED has no clean Japan expectations series, so the toolkit (i) keeps HLW on the
+core-inflation MA, (ii) keeps the DSGE on rational expectations, and (iii) for
+the four term-structure / common-trends methods uses a **short** (≈1y, 4q MA)
+and a **long** (≈5–10y, "anchored" multi-year MA) expectation, with config hooks
+(`INFLATION_EXPECTATIONS_SERIES`, `…_LONG_SERIES`) that accept a real series from
+**FRED, DBnomics, or a downloaded CSV**. The best real sources are **BoJ's own**
+data — the Tankan *Inflation Outlook of Enterprises* (1y/3y/5y, from 2014), the
+*Opinion Survey on the General Public* (households, from 2006), and BoJ's
+composite indicator (firms + households + experts incl. inflation swaps) — which
+a user can splice in via DBnomics or a CSV export (see the update manual).
 
 ---
 
@@ -250,7 +261,66 @@ See **`docs/02_update_manual.md`** to refresh and re-run both.
 
 ---
 
-## 6. References
+## 6. Why this toolkit's *range* is wider than BoJ's — a diagnosis
+
+BoJ's published Chart 3 (file `rev26e04b.xlsx`) puts the six methods in a fairly
+tight band — latest (2025Q3) roughly **−0.93% (Goy–Iwasaki) to +0.53%
+(Nakajima)**, width ≈ **1.5 pp**. This toolkit's band on the bundled data is
+**wider (≈ 3 pp)**. The difference is almost entirely explained, in order of
+importance, by **data → data-handling → modeling** — not by a flaw in any one
+method:
+
+**1. Data (the dominant factor here): synthetic vs. real.** The shipped sample
+is a *synthetic* stand-in whose recent inflation (~2.6%) and ex-ante short real
+rate (~−2.7% = NIRP minus high near-term inflation) are more extreme than
+Japan's actual data. Methods that key off the *level* of the real rate
+(Imakubo, Goy–Iwasaki, Del Negro) get pulled far down by that −2.7% short real
+rate. On real FRED data the recent short real rate is materially less negative,
+so these compress toward the others. **Run it on real data and the band narrows
+substantially.** Note that the methods which are *not* dominated by the raw real
+rate already land near BoJ: our HLW (≈0.0% vs BoJ −0.5%), Nakajima (≈−0.2% vs
++0.5%), and DSGE (≈+1.0% vs +0.4%) are all close — the gap is concentrated in
+Imakubo and Goy–Iwasaki, i.e. the most real-rate-sensitive methods on exaggerated
+data.
+
+**2. Data handling — inflation expectations.** The originals deflate the *long*
+end of the yield curve with **survey/anchored** expectations; deflating it
+instead with a backward MA of realized inflation (during an inflation spike)
+overstates expected inflation, understates the real long rate, and pushes the
+term-structure r\* too low. Switching the long-rate deflator to anchored
+expectations moved our Imakubo estimate up by ~0.2–0.4 pp and Goy–Iwasaki by
+~0.3 pp. The *short* end is still deflated by near-term inflation (which is
+realistic — Japan's real policy rate genuinely was very negative in 2022–24), so
+short-rate-driven methods remain data-sensitive by design.
+
+**3. Modeling — reduced forms vs. the authors' full estimators.** Where BoJ uses
+each paper's full machinery (a Bayesian VAR with a convenience-yield block, an
+affine macro-finance term-structure model, a medium-scale estimated DSGE), this
+toolkit uses tractable reduced-form/MLE versions (a frequentist common-trends UC,
+a single-common-trend extraction, a consumption-Euler identity). The originals
+embed structure — term premia, convenience yields, tight trend priors, and a
+common potential-growth anchor — that pulls r\* toward trend growth and damps the
+spread. Our six are estimated *independently* with no shared trend-growth or
+level anchor, which mechanically widens the cross-method range. (HLW is the
+exception: it now carries an explicit long-run-neutrality level anchor.)
+
+**4. Sample, vintage and end-point sensitivity.** r\* endpoints are notoriously
+revision-prone under one-sided filtering; BoJ's sample window, real-time
+vintages and (for some methods) judgmental calibration differ from a from-FRED
+rebuild, which shifts levels by a few tenths.
+
+**Bottom line:** the wider band is mostly an artifact of the **synthetic test
+data** plus the deliberately **simplified estimators**, amplified for the two
+most real-rate-sensitive methods. The fixes that close most of the gap are
+already in place or available: run on **real FRED data**, wire in **survey-based
+expectations** (BoJ Tankan via DBnomics/CSV), and — if exact replication is
+required — swap the reduced forms for the authors' published code. The
+qualitative story BoJ tells (secular decline; ~−1.0% to +0.5% recently; read the
+range, not a point) is reproduced either way.
+
+---
+
+## 7. References
 
 - Nakano, S., Sugioka, Y. & Yamamoto, H. (2024). *Recent Developments in Measuring
   the Natural Rate of Interest.* BOJ Working Paper 24-E-12.

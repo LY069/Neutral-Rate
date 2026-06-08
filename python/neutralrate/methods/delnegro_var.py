@@ -42,7 +42,11 @@ class DelNegroResult:
 
 
 def estimate(df: pd.DataFrame) -> DelNegroResult:
-    cols = ["real_short_rate", "gdp_growth", "inflation"]
+    # Del Negro et al. pin trend inflation with long-run survey expectations;
+    # we feed the survey-deflated real short rate as the real-rate observable.
+    df = df.copy()
+    df["_rs"] = df["real_short_exp"] if "real_short_exp" in df else df["real_short_rate"]
+    cols = ["_rs", "gdp_growth", "inflation"]
     d = df.dropna(subset=cols)
     Y = d[cols].to_numpy()
     n = len(d)

@@ -48,7 +48,8 @@ DATA_COLS = [
     "real_gdp", "consumption", "cpi", "core_cpi_yoy", "short_rate", "rate_3m",
     "rate_10y", "working_age_pop", "log_gdp", "log_cons", "gdp_growth",
     "cons_growth", "inflation", "inflation_yoy", "exp_inflation",
-    "real_short_rate", "real_10y", "real_3m",
+    "exp_inflation_long", "real_short_rate", "real_10y", "real_10y_exp",
+    "real_3m",
 ]
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
@@ -139,11 +140,14 @@ def _populate_data_sheet(ws, features: pd.DataFrame):
     c_goy = add("Goy", "rstar_GoyIwasaki")
     c_dn = add("DelNegro", "rstar_DelNegro_VAR")
 
-    P = L["real_short_rate"]; Q = L["real_10y"]; K = L["gdp_growth"]; Lc = L["cons_growth"]
+    P = L["real_short_rate"]; K = L["gdp_growth"]; Lc = L["cons_growth"]
+    # Term-structure methods deflate the LONG rate by anchored (survey-style)
+    # expectations -> use real_10y_exp, not the short-deflated real_10y.
+    Qexp = L.get("real_10y_exp", L["real_10y"])
 
     for r in range(2, n + 2):
-        ws[f"{c_tp}{r}"] = f"={Q}{r}-{P}{r}"
-        ws[f"{c_r10adj}{r}"] = f"={Q}{r}-Settings!$B$5"   # B5 = avg term spread
+        ws[f"{c_tp}{r}"] = f"={Qexp}{r}-{P}{r}"           # real term premium (exp basis)
+        ws[f"{c_r10adj}{r}"] = f"={Qexp}{r}-Settings!$B$5"  # B5 = avg term spread
         ws[f"{c_mid}{r}"] = f"=0.5*({P}{r}+{c_r10adj}{r})"
         # trailing moving averages over an explicit window (relative range so it
         # shifts correctly when new rows are filled down)

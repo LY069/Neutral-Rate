@@ -27,7 +27,9 @@ import requests
 
 from .config import (
     FRED_SERIES,
+    INFLATION_EXPECTATION_LONG_WINDOW,
     INFLATION_EXPECTATION_WINDOW,
+    INFLATION_EXPECTATIONS_LONG_SERIES,
     INFLATION_EXPECTATIONS_SERIES,
     SAMPLE_END,
     SAMPLE_START,
@@ -37,6 +39,7 @@ from .config import (
 
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 FREDGRAPH_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+DBNOMICS_URL = "https://api.db.nomics.world/v22/series"
 
 # Native frequency hints -> how to aggregate to quarterly.
 # "mean"  : average within the quarter (rates, indices read as levels)
@@ -49,6 +52,7 @@ AGG_RULE: dict[str, str] = {
     "cpi": "mean",
     "core_cpi_yoy": "mean",
     "inflation_expectations": "mean",
+    "inflation_expectations_long": "mean",
     "working_age_pop": "mean",
 }
 
@@ -112,6 +116,52 @@ def fetch_series(series_id: str) -> pd.Series:
     return _fetch_fredgraph(series_id)
 
 
+def _fetch_dbnomics(code: str, retries: int = 4) -> pd.Series:
+    """Fetch a DBnomics series 'PROVIDER/DATASET/SERIES' (e.g. BoJ Tankan, OECD).
+
+    DBnomics (api.db.nomics.world) is a free aggregator that mirrors Bank of
+    Japan Time-Series data and OECD surveys - the practical way to pull Japan
+    inflation-expectations series programmatically.
+    """
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(f"{DBNOMICS_URL}/{code}",
+                             params={"observations": "1"}, timeout=30)
+            r.raise_for_status()
+            docs = r.json()["series"]["docs"][0]
+            idx = pd.to_datetime(docs["period"])
+            vals = pd.to_numeric(pd.Series(docs["value"]), errors="coerce")
+            vals.index = idx
+            vals.name = code
+            return vals
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"DBnomics fetch failed for {code}: {last_err}")
+
+
+def fetch_expectations(spec: str) -> pd.Series:
+    """Load an inflation-expectations series from any supported source.
+
+    spec may be:
+      * a local CSV path (date,value columns) - e.g. a BoJ Tankan export,
+      * a DBnomics code 'PROVIDER/DATASET/SERIES' (contains '/'),
+      * otherwise a FRED series id.
+    """
+    # Route by spec shape: a .csv (or an existing local file) -> CSV reader;
+    # a 'PROVIDER/DATASET/SERIES' code -> DBnomics; otherwise a FRED id.
+    if spec.lower().endswith(".csv") or os.path.exists(spec):
+        df = pd.read_csv(spec)
+        date_col, val_col = df.columns[0], df.columns[1]
+        s = pd.to_numeric(df[val_col], errors="coerce")
+        s.index = pd.to_datetime(df[date_col])
+        return s
+    if "/" in spec:
+        return _fetch_dbnomics(spec)
+    return fetch_series(spec)
+
+
 # --------------------------------------------------------------------------- #
 # Build the quarterly panel
 # --------------------------------------------------------------------------- #
@@ -132,10 +182,14 @@ def fetch_raw_panel() -> pd.DataFrame:
     for logical, fred_id in FRED_SERIES.items():
         raw = fetch_series(fred_id)
         cols[logical] = _to_quarterly(raw, logical)
-    # optional dedicated inflation-expectations / breakeven series
+    # optional dedicated survey expectation series (FRED / DBnomics / CSV)
     if INFLATION_EXPECTATIONS_SERIES:
-        raw = fetch_series(INFLATION_EXPECTATIONS_SERIES)
+        raw = fetch_expectations(INFLATION_EXPECTATIONS_SERIES)
         cols["inflation_expectations"] = _to_quarterly(raw, "inflation_expectations")
+    if INFLATION_EXPECTATIONS_LONG_SERIES:
+        raw = fetch_expectations(INFLATION_EXPECTATIONS_LONG_SERIES)
+        cols["inflation_expectations_long"] = _to_quarterly(
+            raw, "inflation_expectations_long")
     panel = pd.DataFrame(cols)
     if SAMPLE_END:
         panel = panel.loc[:SAMPLE_END]
@@ -184,19 +238,40 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
         df["inflation"] = 4.0 * log_cpi.diff()
         df["inflation_yoy"] = log_cpi.diff(4)
 
-    # Expected inflation: a dedicated FRED series if one is configured,
-    # otherwise the HLW moving-average-of-core-inflation adaptive proxy.
-    if "inflation_expectations" in df and df["inflation_expectations"].notna().any():
-        df["exp_inflation"] = df["inflation_expectations"]
-    else:
-        df["exp_inflation"] = (
-            df["inflation"].rolling(INFLATION_EXPECTATION_WINDOW, min_periods=1).mean()
-        )
+    # --- Expected inflation, two horizons -------------------------------- #
+    # Proxies (always computed): SHORT = 4q MA of core (the HLW expectation);
+    # LONG = multi-year MA of core (an "anchored" stand-in for ~5-10y survey
+    # expectations).  A configured survey series is SPLICED on top - used where
+    # available, proxy fills the earlier history (BoJ surveys start 2006-2014).
+    proxy_short = df["inflation"].rolling(
+        INFLATION_EXPECTATION_WINDOW, min_periods=1).mean()
+    proxy_long = df["inflation"].rolling(
+        INFLATION_EXPECTATION_LONG_WINDOW, min_periods=4).mean().fillna(proxy_short)
 
-    # ex-ante real rates
+    if "inflation_expectations" in df and df["inflation_expectations"].notna().any():
+        df["exp_inflation"] = df["inflation_expectations"].combine_first(proxy_short)
+    else:
+        df["exp_inflation"] = proxy_short
+
+    # The term-structure / common-trends methods deflate the *long* end of the
+    # yield curve with this, mirroring the originals' survey-based expectations.
+    if ("inflation_expectations_long" in df
+            and df["inflation_expectations_long"].notna().any()):
+        df["exp_inflation_long"] = (
+            df["inflation_expectations_long"].combine_first(proxy_long))
+    else:
+        df["exp_inflation_long"] = proxy_long
+
+    # --- ex-ante real rates ---------------------------------------------- #
+    # Adaptive (HLW): deflate by the short-horizon (4q MA) expectation.
     df["real_short_rate"] = df["short_rate"] - df["exp_inflation"]
     df["real_10y"] = df["rate_10y"] - df["exp_inflation"]
     df["real_3m"] = df["rate_3m"] - df["exp_inflation"]
+    # Survey-based (term-structure / common-trends methods): deflate the short
+    # end by the short expectation and the long end by the long (anchored) one.
+    df["real_short_exp"] = df["short_rate"] - df["exp_inflation"]
+    df["real_3m_exp"] = df["rate_3m"] - df["exp_inflation"]
+    df["real_10y_exp"] = df["rate_10y"] - df["exp_inflation_long"]
 
     return df
 

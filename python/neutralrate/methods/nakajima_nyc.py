@@ -38,7 +38,9 @@ class NakajimaResult:
 def estimate(df: pd.DataFrame) -> NakajimaResult:
     gap, tg = output_gap(df["log_gdp"])      # tg = annualized trend growth %
     d = df.reindex(gap.index)
-    rs = d["real_short_rate"]; rl = d["real_10y"]
+    # Survey-based real yields (long end deflated by anchored expectations).
+    rs = d["real_short_exp"] if "real_short_exp" in d else d["real_short_rate"]
+    rl = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
     spread_long = float((rl - rs).mean())
     mid = 0.5 * (rs + (rl - spread_long))
 

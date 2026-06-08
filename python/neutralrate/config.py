@@ -61,15 +61,38 @@ SAMPLE_START = "1985-01-01"  # estimation start (data trimmed to availability)
 SAMPLE_END = None            # None -> latest available
 
 # Inflation expectations.
-# FRED carries no clean, long-history, percentage-valued Japan inflation-
-# expectations series (Japan breakeven rates are distorted by deflation-option
-# and liquidity premia - see BOJ WP 20-E-5; the Cleveland Fed EXPINF series is
-# US-only).  We therefore follow Holston-Laubach-Williams and build expected
-# inflation as a moving average of *core* CPI inflation (the adaptive-
-# expectations proxy).  If you DO have access to a percentage expectations or
-# breakeven series on FRED, set its id here and it will be used directly.
-INFLATION_EXPECTATIONS_SERIES: str | None = None   # e.g. a JGB breakeven id
-INFLATION_EXPECTATION_WINDOW = 4   # quarters in the core-inflation MA proxy
+# The original papers treat expected inflation in THREE different ways, and the
+# toolkit mirrors that:
+#   * HLW (semi-structural): adaptive, backward-looking - a 4q moving average of
+#     core inflation.  -> exp_inflation below.
+#   * Okazaki-Sudo (DSGE): model-consistent rational expectations - no external
+#     series is used at all.
+#   * Imakubo, Nakajima, Goy-Iwasaki, Del Negro (term-structure / common-trends):
+#     SURVEY-BASED, maturity-specific expectations used to deflate the nominal
+#     yield curve (Consensus Forecasts in Japan; long-run SPF in Del Negro).
+#
+# FRED carries no clean, long-history, percentage Japan inflation-expectations
+# series.  The best REAL sources are from the Bank of Japan and aggregators:
+#   * BoJ Tankan "Inflation Outlook of Enterprises" - firms' expected CPI at
+#     1y/3y/5y (%, from 2014) - BoJ Time-Series Data Search (stat-search.boj.or.jp)
+#   * BoJ "Opinion Survey on the General Public" - households' 1y/5y (%, from 2006)
+#   * BoJ composite indicator (firms + households + experts: QUICK survey,
+#     Consensus Forecasts, inflation swaps)
+#   * DBnomics (api.db.nomics.world) mirrors BoJ Tankan + OECD with a free API
+#   * Japan breakevens / inflation swaps (Bloomberg/Refinitiv; distorted, BOJ WP 20-E-5)
+#
+# Each hook below accepts ANY of:
+#   - a FRED series id            e.g. "T10YIE"          (fetched from FRED)
+#   - a DBnomics code "PROV/DATASET/SERIES"              (fetched from DBnomics)
+#   - a local CSV path with date,value columns           e.g. "data/boj_tankan_1y.csv"
+# Because BoJ surveys are short, a configured series is SPLICED onto the proxy:
+# the survey value is used where available, the proxy fills the earlier history.
+# If a hook is None, the toolkit uses only the proxy: a SHORT (4q MA of core)
+# and a LONG-horizon "anchored" (multi-year MA of core) expectation.
+INFLATION_EXPECTATIONS_SERIES: str | None = None       # short / ~1y expectation
+INFLATION_EXPECTATIONS_LONG_SERIES: str | None = None  # long / ~5-10y expectation
+INFLATION_EXPECTATION_WINDOW = 4    # quarters in the short (HLW) MA proxy
+INFLATION_EXPECTATION_LONG_WINDOW = 20   # quarters in the long-run anchor proxy
 
 
 # --------------------------------------------------------------------------- #

@@ -40,7 +40,10 @@ def estimate(df: pd.DataFrame) -> GoyIwasakiResult:
     _, tg = output_gap(df["log_gdp"])
     d = df.copy()
     d["trend_growth"] = tg.reindex(d.index)
-    cols = ["real_short_rate", "real_10y", "trend_growth"]
+    # Survey-based real yields (macro-finance models use survey expectations).
+    d["_rs"] = d["real_short_exp"] if "real_short_exp" in d else d["real_short_rate"]
+    d["_rl"] = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
+    cols = ["_rs", "_rl", "trend_growth"]
     d = d.dropna(subset=cols)
     Y = d[cols].to_numpy()
     n = len(d)

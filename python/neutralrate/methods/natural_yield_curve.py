@@ -62,7 +62,10 @@ def _implied_rate(gap, mid, phi1, phi2, delta):
 def estimate(df: pd.DataFrame) -> NYCResult:
     gap, _tg = output_gap(df["log_gdp"])
     d = df.reindex(gap.index)
-    rs = d["real_short_rate"]; rl = d["real_10y"]
+    # Survey-based real yields (long end deflated by anchored expectations),
+    # mirroring Imakubo et al.'s Consensus-Forecasts deflation of nominal yields.
+    rs = d["real_short_exp"] if "real_short_exp" in d else d["real_short_rate"]
+    rl = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
     spread_long = float((rl - rs).mean())
     mid = 0.5 * (rs + (rl - spread_long))
 

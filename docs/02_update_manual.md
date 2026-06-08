@@ -133,12 +133,43 @@ Set this up once and thereafter just press **Data ▸ Refresh All**.
 | `rate_10y` | `IRLTLT01JPM156N` |
 | `working_age_pop` | `LFWA64TTJPM647S` |
 
-> **Inflation expectations.** The models use a moving average of **core** CPI
-> inflation (`CPGRLE01JPQ657N`) as the expected-inflation proxy, following
-> Holston-Laubach-Williams — FRED has no clean percentage Japan
-> inflation-expectations series. If you have one (e.g. a JGB breakeven or
-> Consensus series), set its FRED id in `INFLATION_EXPECTATIONS_SERIES`
-> (in `python/neutralrate/config.py`) and it will be fetched and used directly.
+### Inflation expectations — using real survey data (recommended)
+
+The methods treat expected inflation in three ways, matching the originals:
+HLW uses a 4-quarter MA of core inflation (adaptive); the DSGE uses rational
+expectations (no series); the four term-structure / common-trends methods
+(Imakubo, Nakajima, Goy-Iwasaki, Del Negro) deflate the yield curve with
+**survey-based** expectations. FRED has no clean Japan expectations series, so
+the best **real** sources are from the Bank of Japan and aggregators:
+
+| Source | What | Horizon | History | Access |
+|---|---|---|---|---|
+| **BoJ Tankan – "Inflation Outlook of Enterprises"** | firms' expected CPI | 1y / 3y / 5y | 2014– | BoJ Time-Series Data Search (`stat-search.boj.or.jp`) → CSV |
+| **BoJ Opinion Survey (General Public)** | households' expected prices | 1y / 5y | 2006– | BoJ stat-search → CSV |
+| **BoJ composite indicator** | firms+households+experts (QUICK, Consensus, inflation swaps) | multi | 2014– | BoJ research data |
+| **DBnomics** | mirrors BoJ Tankan + OECD | various | varies | free API `api.db.nomics.world` |
+| **JCER ESP Forecast / Consensus** | professional forecasters | 1y…10y | long | subscription |
+
+Two config hooks (`python/neutralrate/config.py`) — a short (~1y) and a long
+(~5–10y) horizon — each accept **any** of:
+
+```python
+INFLATION_EXPECTATIONS_SERIES      = "T10YIE"                       # a FRED id
+INFLATION_EXPECTATIONS_LONG_SERIES = "BOJ/CO/CO'MAA01...'"          # a DBnomics code
+# or a local CSV you downloaded from BoJ (date,value columns):
+INFLATION_EXPECTATIONS_LONG_SERIES = "data/boj_tankan_5y.csv"
+```
+
+Because BoJ surveys are short, a configured series is **spliced** onto the
+proxy automatically: the survey value is used where available and the
+core-inflation MA fills the earlier history (so a 2014-on Tankan series still
+works for a 1990s-on estimation sample). If both hooks are `None`, the toolkit
+uses the proxy only (4q MA for the short horizon, multi-year MA for the long).
+
+> **How to wire BoJ Tankan in 3 steps:** (1) download the "Inflation Outlook of
+> Enterprises" series from BoJ Time-Series Data Search as CSV; (2) keep two
+> columns `date,value` (the 1y and 5y averages); (3) point the two hooks at the
+> files and re-run `refresh_data.py` + `run_all`.
 
 > Monthly series (`cpi`, the three interest rates, `working_age_pop`) must be
 > aggregated to **quarterly averages** to match the GDP frequency. The automated
