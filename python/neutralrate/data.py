@@ -219,10 +219,12 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
       cons_growth       : annualized q/q (per-capita) consumption growth
       inflation         : annualized q/q CPI inflation
       inflation_yoy     : 4-quarter CPI inflation
-      exp_inflation     : trailing 4q average of inflation (expectations proxy)
+      exp_inflation     : short-horizon expected inflation (4q MA of core, or
+                          a spliced survey series); exp_inflation_long = anchored
+                          long-horizon expectation
       real_short_rate   : short_rate - exp_inflation     (ex-ante real policy)
-      real_10y          : rate_10y  - exp_inflation
-      output_gap        : 100*(log_gdp - HP/one-sided trend)   [filled in by methods]
+      real_10y          : rate_10y  - exp_inflation;  real_10y_exp uses the long
+                          (anchored) expectation, for the term-structure methods
     """
     df = panel.copy()
 

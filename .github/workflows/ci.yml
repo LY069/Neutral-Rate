@@ -1,0 +1,37 @@
+name: CI
+
+# Smoke-tests the r* toolkit offline (no network / FRED needed): regenerates the
+# synthetic sample, then runs all six estimation methods via the smoke tests.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Regenerate synthetic sample
+        run: python scripts/make_sample_data.py
+
+      - name: Run smoke tests (all six methods, offline)
+        run: python tests/test_smoke.py
+
+      - name: Build Excel workbook (offline)
+        run: python ../excel/build_workbook.py

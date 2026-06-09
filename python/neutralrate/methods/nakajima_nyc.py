@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from ._lw import estimate_lw
@@ -42,7 +43,6 @@ def estimate(df: pd.DataFrame, restarts: int = 2, seed: int = 0) -> NakajimaResu
     # when growth exceeds the realized real rate, as in the BoJ estimates.
     out = estimate_lw(df, mid, c=1.0, sigma_g=SIGMA_G, sigma_z=SIGMA_Z,
                       anchor_level=False, restarts=restarts, seed=seed)
-    import numpy as np
     rstar_arr = out["r_star"] + (np.nanmean(out["trend_growth"])
                                  - np.nanmean(out["r_star"]))
     idx = out["index"]

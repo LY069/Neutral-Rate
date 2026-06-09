@@ -127,12 +127,10 @@ class DSGEParams:
 
 @dataclass
 class HLWPriors:
-    """Loose starting values / bounds for the HLW signal-to-noise parameters
-    (Holston-Laubach-Williams).  Estimation refines these by MLE; they also
-    seed the in-Excel Kalman recursion."""
-    lambda_g: float = 0.05    # trend-growth smoothing ratio
-    lambda_z: float = 0.03    # other-factor (z) smoothing ratio
-    c_param: float = 1.0      # r* = 4*g + z scaling on g (4 for annualizing q/q)
+    """HLW settings. The trend-shock std devs are fixed in the LW engine
+    (methods/_lw.py, SIGMA_G/SIGMA_Z - the low signal-to-noise that smooths r*);
+    here we expose only the growth-loading c (r* = 4*c*g + z)."""
+    c_param: float = 1.0      # r* = 4*c*g + z scaling on g (4 for annualizing q/q)
 
 
 @dataclass
