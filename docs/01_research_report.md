@@ -298,15 +298,14 @@ method:
 **1. Data (the dominant factor here): synthetic vs. real.** The shipped sample
 is a *synthetic* stand-in whose recent inflation (~2.6%) and ex-ante short real
 rate (~−2.7% = NIRP minus high near-term inflation) are more extreme than
-Japan's actual data. Methods that key off the *level* of the real rate
-(Imakubo, Goy–Iwasaki, Del Negro) get pulled far down by that −2.7% short real
-rate. On real FRED data the recent short real rate is materially less negative,
-so these compress toward the others. **Run it on real data and the band narrows
-substantially.** Note that the methods which are *not* dominated by the raw real
-rate already land near BoJ: our HLW (≈0.0% vs BoJ −0.5%), Nakajima (≈−0.2% vs
-+0.5%), and DSGE (≈+1.0% vs +0.4%) are all close — the gap is concentrated in
-Imakubo and Goy–Iwasaki, i.e. the most real-rate-sensitive methods on exaggerated
-data.
+Japan's actual data. After the smoothing fix four methods already match BoJ
+closely (HLW, Imakubo, Nakajima, Goy–Iwasaki); the residual range is driven by
+the two methods whose *level* is dominated by the synthetic real-rate path:
+**DSGE** sits high (its r* = ρ + γ·g_c tracks the synthetic trend consumption
+growth, ~1.2%) and **Del Negro** sits low (its common real-rate trend follows
+the very negative synthetic short real rate). On real FRED data the short real
+rate is materially less negative and trend growth lower, so both compress toward
+the others. **Run it on real data and the band narrows toward BoJ's ~1.5 pp.**
 
 **2. Data handling — inflation expectations.** The originals deflate the *long*
 end of the yield curve with **survey/anchored** expectations; deflating it
