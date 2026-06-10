@@ -27,15 +27,18 @@ docs/
 python/
   neutralrate/            ← package: data layer + one module per method
   scripts/refresh_data.py ← pull latest FRED data (FRED_API_KEY env var)
+  scripts/validate_vs_boj.py ← one-command check vs BoJ's published Chart 3
   scripts/make_sample_data.py
   run_all (module)        ← estimate all six, write CSV/JSON/chart
-  tests/test_smoke.py
+  tests/test_smoke.py     ← incl. smoothness / ordering / tax-adj regression tests
   output/                 ← r_star_estimates.csv, method_params.json, chart
 excel/
   build_workbook.py       ← generates the refreshable workbook
   Japan_Neutral_Rate_Models.xlsx
 data/
   sample/                 ← bundled SYNTHETIC sample (offline demo/testing)
+  boj/                    ← BoJ Chart 3 reference estimates (validation target)
+  expectations/           ← pre-wired BoJ Tankan CSV hooks (see its README)
 ```
 
 ## Quick start
@@ -52,6 +55,7 @@ python ../excel/build_workbook.py
 export FRED_API_KEY=your_key_here
 python scripts/refresh_data.py            # pull latest Japan series from FRED
 python -m neutralrate.run_all --refresh    # re-estimate all six methods
+python scripts/validate_vs_boj.py          # compare against BoJ's Chart 3
 ```
 
 ## Fidelity, honestly

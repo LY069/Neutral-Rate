@@ -26,6 +26,8 @@ import pandas as pd
 import requests
 
 from .config import (
+    ADJUST_CONSUMPTION_TAX,
+    CONSUMPTION_TAX_EFFECTS,
     FRED_SERIES,
     INFLATION_EXPECTATION_LONG_WINDOW,
     INFLATION_EXPECTATION_WINDOW,
@@ -209,6 +211,27 @@ def fetch_raw_panel() -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Derived variables used by the models
 # --------------------------------------------------------------------------- #
+def _tax_adjust(infl: pd.Series, yoy: bool) -> pd.Series:
+    """Strip the mechanical consumption-tax effect from Japanese CPI inflation.
+
+    For a YoY series, each hike lifts inflation by ~`pp` for the four quarters
+    in its window; for an annualized q/q series the entire level shift lands in
+    the hike quarter (~4*pp).  Windows/magnitudes in config.CONSUMPTION_TAX_EFFECTS.
+    """
+    if not ADJUST_CONSUMPTION_TAX:
+        return infl
+    adj = infl.copy()
+    for start, end, pp in CONSUMPTION_TAX_EFFECTS:
+        if yoy:
+            mask = (adj.index >= start) & (adj.index <= end)
+            adj.loc[mask] = adj.loc[mask] - pp
+        else:
+            mask = (adj.index >= start) & (adj.index <= pd.Timestamp(start)
+                                           + pd.offsets.QuarterEnd(1))
+            adj.loc[mask] = adj.loc[mask] - 4.0 * pp
+    return adj
+
+
 def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     """Construct the model-ready variables (logs, gaps, real rates, inflation).
 
@@ -242,12 +265,12 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     # HLW-appropriate measure - and fall back to all-items CPI when absent
     # (e.g. the offline synthetic sample or a re-pointed config).
     if "core_cpi_yoy" in df and df["core_cpi_yoy"].notna().any():
-        df["inflation"] = df["core_cpi_yoy"]            # already YoY %
-        df["inflation_yoy"] = df["core_cpi_yoy"]
+        df["inflation"] = _tax_adjust(df["core_cpi_yoy"], yoy=True)
+        df["inflation_yoy"] = df["inflation"]
     else:
         log_cpi = 100.0 * np.log(df["cpi"])
-        df["inflation"] = 4.0 * log_cpi.diff()
-        df["inflation_yoy"] = log_cpi.diff(4)
+        df["inflation"] = _tax_adjust(4.0 * log_cpi.diff(), yoy=False)
+        df["inflation_yoy"] = _tax_adjust(log_cpi.diff(4), yoy=True)
 
     # --- Expected inflation, two horizons -------------------------------- #
     # Proxies (always computed): SHORT = 4q MA of core (the HLW expectation);

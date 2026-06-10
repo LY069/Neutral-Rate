@@ -52,14 +52,17 @@ def _build_ssm(theta, c, sigma_g, sigma_z):
     Q[3, 3] = sigma_g ** 2
     Q[6, 6] = sigma_z ** 2
 
-    # Measurement (observed-data intercepts subtracted by the caller).  Single
-    # real-rate lag (a symmetric two-lag average induces a 2q oscillation in z).
+    # Measurement (observed-data intercepts subtracted by the caller).  The IS
+    # curve carries the ORIGINAL HLW two-lag average real-rate-gap term,
+    # -(a_r/2)(r̃_{t-1}+r̃_{t-2}), so r*'s lags load (a_r/2) each via g and z.
     Z = np.zeros((2, m))
     Z[0, 0] = 1.0
     Z[0, 1] = -a1
     Z[0, 2] = -a2
-    Z[0, 4] = 4.0 * a_r * c
-    Z[0, 7] = a_r
+    Z[0, 4] = 2.0 * a_r * c    # (a_r/2)*4c on g_{t-1}
+    Z[0, 5] = 2.0 * a_r * c    # (a_r/2)*4c on g_{t-2}
+    Z[0, 7] = a_r / 2.0        # on z_{t-1}
+    Z[0, 8] = a_r / 2.0        # on z_{t-2}
     Z[1, 1] = -b_y
     H = np.diag([s_e1 ** 2, s_e2 ** 2])
     return T, Z, Q, H
@@ -84,7 +87,8 @@ def estimate_lw(df: pd.DataFrame, rate: pd.Series, *, c: float = 1.0,
 
     def make_yadj(a1, a2, a_r, b_pi, b_y):
         yadj = np.full((n, 2), np.nan)
-        yadj[2:, 0] = y[2:] - (a1 * y[1:-1] + a2 * y[:-2] - a_r * r[1:-1])
+        yadj[2:, 0] = y[2:] - (a1 * y[1:-1] + a2 * y[:-2]
+                               - (a_r / 2.0) * (r[1:-1] + r[:-2]))
         yadj[4:, 1] = pi[4:] - (b_pi * pi[3:-1] + (1 - b_pi) * pi_bar[4:]
                                 + b_y * y[3:-1])
         return yadj

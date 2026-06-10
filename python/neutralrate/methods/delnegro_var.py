@@ -3,25 +3,29 @@ Method 6 - VAR with common trends (Del Negro, Giannone, Giannoni & Tambalotti,
 2017, "Safety, Liquidity, and the Natural Rate of Interest").  BOJ applied this
 common-trends approach to Japan in WP 24-E-17.
 
-Del Negro et al. estimate r* as the slow-moving *trend* component of the real
-interest rate inside a multivariate time-series model in which several
-macro-financial series share a small number of common stochastic trends.  The
-trend real rate is the natural rate; its decline reflects a falling growth
-trend and a rising safety/liquidity (convenience-yield) premium.
+Del Negro et al. estimate r* as the slow-moving *trend* of the real interest
+rate inside a multivariate model in which macro-financial series share common
+stochastic trends.  Two mechanisms matter: a falling growth trend, and a RISING
+SAFETY/LIQUIDITY (convenience-yield / term) premium that wedges the safe short
+rate away from long yields - which is why the long rate belongs in the
+observation vector.
 
 Tractable faithful form
 ------------------------
-A common-trends unobserved-components model on three series - the real short
-rate, real GDP growth and inflation - with TWO common random-walk trends and
-stationary AR(1) cycles:
+Common-trends unobserved-components model on FOUR observables with THREE
+random-walk trends and AR(1) cycles:
 
-    real_short_t = f1_t            + cyc_r_t
-    gdp_growth_t = c_g + phi*f1_t  + cyc_g_t      (real rate & growth share f1)
-    inflation_t  = c_pi + f2_t     + cyc_pi_t
+    real_short_t = f_r,t                +  cyc_r,t      (r* = f_r)
+    real_10y_t   = f_r,t + f_sp,t       +  cyc_10,t     (f_sp = term/convenience
+                                                          premium trend)
+    gdp_growth_t = c_g + phi * f_r,t    +  cyc_g,t      (growth shares the real
+                                                          trend, as in DGGT)
+    inflation_t  = f_pi,t               +  cyc_pi,t
 
-r* = f1_t (the common real trend).  The original paper uses a Bayesian VAR with
-priors and an explicit convenience-yield block; here we keep a frequentist,
-spreadsheet-reproducible state space and note that simplification.
+Trend innovations are fixed small (low signal-to-noise, the smoothness
+mechanism of the original's priors); cycle persistence/variances are MLE.
+The original is Bayesian with an explicit convenience-yield block on corporate
+spreads; that simplification is documented in the research report.
 """
 from __future__ import annotations
 
@@ -37,65 +41,74 @@ from ..kalman import SSM, filter_smooth, loglik
 @dataclass
 class DelNegroResult:
     r_star: pd.Series
+    convenience_trend: pd.Series   # trend term/safety premium (10y - r*)
     trend_growth: pd.Series
     params: dict
 
 
 def estimate(df: pd.DataFrame) -> DelNegroResult:
-    # Del Negro et al. pin trend inflation with long-run survey expectations;
-    # we feed the survey-deflated real short rate as the real-rate observable.
-    df = df.copy()
-    df["_rs"] = df["real_short_exp"] if "real_short_exp" in df else df["real_short_rate"]
-    cols = ["_rs", "gdp_growth", "inflation"]
-    d = df.dropna(subset=cols)
+    d = df.copy()
+    d["_rs"] = d["real_short_exp"] if "real_short_exp" in d else d["real_short_rate"]
+    d["_r10"] = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
+    cols = ["_rs", "_r10", "gdp_growth", "inflation"]
+    d = d.dropna(subset=cols)
     Y = d[cols].to_numpy()
     n = len(d)
 
-    # state = [f1, f2, cyc_r, cyc_g, cyc_pi]
-    a1 = np.array([float(np.nanmean(Y[:8, 0])), float(np.nanmean(Y[:8, 2])),
-                   0.0, 0.0, 0.0])
-    P1 = np.diag([25.0, 25.0, 10.0, 10.0, 10.0])
+    # state = [f_r, f_sp, f_pi, cyc_r, cyc_10, cyc_g, cyc_pi]
+    # Trends start at early-sample means with TIGHT priors: the f_r / f_sp split
+    # in the 10y equation is only identified through the short-rate equation, so
+    # loose trend priors + near-unit-root cycles let f_r drift.
+    a1 = np.array([float(np.nanmean(Y[:8, 0])),
+                   float(np.nanmean(Y[:8, 1] - Y[:8, 0])),
+                   float(np.nanmean(Y[:8, 3])),
+                   0.0, 0.0, 0.0, 0.0])
+    P1 = np.diag([4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0])
 
-    SIGMA_F = 0.07          # common-trend innovation std (smooth but not flat)
+    SIGMA_FR = 0.07    # trend real rate innovation (smooth but not flat)
+    SIGMA_FSP = 0.05   # convenience/term-premium trend innovation
+    SIGMA_FPI = 0.10   # trend inflation innovation
 
     def build(theta):
-        phi, c_g, c_pi = theta[:3]
-        rho_r, rho_g, rho_pi = theta[3:6]
-        s_cr, s_cg, s_cpi = np.exp(theta[6:9])
-        s_f1 = s_f2 = SIGMA_F
-        T = np.diag([1.0, 1.0, rho_r, rho_g, rho_pi])
-        Q = np.diag([s_f1 ** 2, s_f2 ** 2, s_cr ** 2, s_cg ** 2, s_cpi ** 2])
+        phi, c_g = theta[:2]
+        rho = theta[2:6]
+        s_cyc = np.exp(theta[6:10])
+        T = np.diag([1.0, 1.0, 1.0, *rho])
+        Q = np.diag([SIGMA_FR ** 2, SIGMA_FSP ** 2, SIGMA_FPI ** 2,
+                     *(s_cyc ** 2)])
         Z = np.array([
-            [1.0, 0.0, 1.0, 0.0, 0.0],
-            [phi, 0.0, 0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            [phi, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
         ])
-        d_vec = np.array([0.0, c_g, c_pi])
-        H = np.eye(3) * 1e-4
+        d_vec = np.array([0.0, 0.0, c_g, 0.0])
+        H = np.eye(4) * 1e-4
         return SSM(T=T, Z=Z, Q=Q, H=H, d=d_vec, a1=a1.copy(), P1=P1.copy())
 
     def neg_ll(theta):
-        rho_r, rho_g, rho_pi = theta[3:6]
-        pen = 0.0
-        for r in (rho_r, rho_g, rho_pi):
-            if not (-0.99 < r < 0.99):
-                pen += 1e3
+        # cycles must be CYCLES: |rho| <= 0.9 keeps transitory components from
+        # impersonating the trend (which would let f_r drift off the data).
+        pen = sum(1e4 * (abs(r) - 0.9) for r in theta[2:6] if abs(r) > 0.9)
         ll = loglik(Y, build(theta))
         return (-ll + pen) if np.isfinite(ll) else 1e6
 
-    x0 = np.array([1.0, 0.0, 0.0, 0.6, 0.6, 0.6,
-                   np.log(0.5), np.log(0.5), np.log(0.5)])
+    x0 = np.array([1.0, 0.0, 0.6, 0.6, 0.6, 0.6,
+                   np.log(0.5), np.log(0.5), np.log(0.5), np.log(0.5)])
     res = minimize(neg_ll, x0, method="Nelder-Mead",
-                   options={"maxiter": 2000, "fatol": 1e-4, "xatol": 1e-4})
+                   options={"maxiter": 2500, "fatol": 1e-4, "xatol": 1e-4})
     sm = filter_smooth(Y, build(res.x))["smoothed"]
-    f1 = sm[:, 0]
+    f_r, f_sp = sm[:, 0], sm[:, 1]
     phi = res.x[0]
 
-    params = {"phi_growth": phi, "c_growth": res.x[1], "c_inflation": res.x[2],
-              "rho_r": res.x[3], "rho_g": res.x[4], "rho_pi": res.x[5],
-              "sigma_f1": SIGMA_F, "sigma_f2": SIGMA_F}
+    params = {"phi_growth": phi, "c_growth": res.x[1],
+              "rho_r": res.x[2], "rho_10": res.x[3],
+              "rho_g": res.x[4], "rho_pi": res.x[5],
+              "sigma_fr": SIGMA_FR, "sigma_fsp": SIGMA_FSP,
+              "sigma_fpi": SIGMA_FPI}
     return DelNegroResult(
-        r_star=pd.Series(f1, index=d.index, name="DelNegro-VAR"),
-        trend_growth=pd.Series(phi * f1, index=d.index, name="trend_growth"),
+        r_star=pd.Series(f_r, index=d.index, name="DelNegro-VAR"),
+        convenience_trend=pd.Series(f_sp, index=d.index, name="convenience_trend"),
+        trend_growth=pd.Series(phi * f_r, index=d.index, name="trend_growth"),
         params=params,
     )

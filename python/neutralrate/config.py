@@ -32,7 +32,10 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 FRED_SERIES: dict[str, str] = {
     # --- Activity (quarterly, seasonally adjusted, real) --------------------
     "real_gdp": "JPNRGDPEXP",          # Real GDP for Japan, SA, bn chained yen
-    "consumption": "JPNPFCEQDSMEI",    # Private final consumption expenditure
+    "consumption": "NAEXKP02JPQ659S",  # Private final consumption, CONSTANT
+                                       # prices (real), SA.  NB: the superficially
+                                       # similar JPNPFCEQDSMEI is CURRENT prices
+                                       # (nominal) and discontinued - do not use.
     # --- Prices (monthly -> quarterly) -------------------------------------
     "cpi": "JPNCPIALLMINMEI",          # CPI, all items, index (fallback)
     "core_cpi_yoy": "CPGRLE01JPQ657N",  # Core CPI (ex food & energy), YoY %, Q
@@ -103,6 +106,28 @@ INFLATION_EXPECTATIONS_LONG_SERIES: str | None = os.path.join(  # long / ~5y
     _EXP_DIR, "japan_infl_exp_5y.csv")
 INFLATION_EXPECTATION_WINDOW = 4    # quarters in the short (HLW) MA proxy
 INFLATION_EXPECTATION_LONG_WINDOW = 20   # quarters in the long-run anchor proxy
+
+# --------------------------------------------------------------------------- #
+# Consumption-tax adjustment (Japan-specific, important)
+# --------------------------------------------------------------------------- #
+# Japan's consumption-tax hikes mechanically lift YoY CPI inflation for the
+# four quarters following each hike.  BoJ analysis works with TAX-ADJUSTED CPI;
+# unadjusted, the spikes contaminate expected inflation and ex-ante real rates
+# precisely at sample-sensitive moments.  Estimated YoY effects (percentage
+# points, headline/core; BoJ put the April-2014 hike at ~+2.0pp for FY2014):
+#   1989Q2-1990Q1  introduction at 3%          ~ +1.2
+#   1997Q2-1998Q1  3% -> 5%                    ~ +1.5
+#   2014Q2-2015Q1  5% -> 8%                    ~ +2.0
+#   2019Q4-2020Q3  8% -> 10% (food kept at 8%,
+#                   free-education offsets)    ~ +0.5
+# Applied to the YoY inflation path when ADJUST_CONSUMPTION_TAX is True.
+ADJUST_CONSUMPTION_TAX = True
+CONSUMPTION_TAX_EFFECTS: list[tuple[str, str, float]] = [
+    ("1989-04-01", "1990-03-31", 1.2),
+    ("1997-04-01", "1998-03-31", 1.5),
+    ("2014-04-01", "2015-03-31", 2.0),
+    ("2019-10-01", "2020-09-30", 0.5),
+]
 
 
 # --------------------------------------------------------------------------- #

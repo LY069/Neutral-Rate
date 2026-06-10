@@ -188,13 +188,27 @@ The single most useful artifact: **what each model actually consumes and produce
 | Logical name | FRED id | Used by |
 |---|---|---|
 | Real GDP | `JPNRGDPEXP` | all (output gap / growth) |
-| Private consumption | `JPNPFCEQDSMEI` | DSGE |
+| Private consumption, **constant prices** | `NAEXKP02JPQ659S` | DSGE |
 | **Core CPI, YoY %** (ex food & energy) | `CPGRLE01JPQ657N` | inflation, expectations, real rates |
 | CPI all-items (fallback) | `JPNCPIALLMINMEI` | inflation if core unavailable |
 | Call/interbank rate (policy) | `IRSTCI01JPM156N` | short real rate |
 | 3-month rate | `IR3TIB01JPM156N` | curve short end |
 | 10-year JGB yield | `IRLTLT01JPM156N` | curve long end |
 | Working-age population | `LFWA64TTJPM647S` | per-capita / demographics |
+
+Two Japan-specific data-handling points a careful replication must get right:
+
+1. **Real, not nominal, consumption.** The superficially obvious FRED series
+   `JPNPFCEQDSMEI` is *current-price* (nominal) consumption — and discontinued.
+   Using it would inflate the DSGE's trend consumption growth by the deflator
+   and bias its r\* up. The toolkit uses `NAEXKP02JPQ659S` (constant prices).
+2. **Consumption-tax adjustment.** The 1989/1997/2014/2019 consumption-tax
+   hikes mechanically lift YoY CPI inflation for four quarters (BoJ put the
+   April-2014 hike at ≈ +2.0pp; 1997 ≈ +1.5pp; 2019 ≈ +0.5pp net of the
+   free-education offset; 1989 ≈ +1.2pp). BoJ works with tax-adjusted CPI, and
+   so does the toolkit (`ADJUST_CONSUMPTION_TAX` in `config.py`, windows and
+   magnitudes documented there). Unadjusted, the spikes contaminate expected
+   inflation and ex-ante real rates exactly at sample-sensitive moments.
 
 **Inflation expectations — handled three ways, matching the originals.** This is
 a genuine point of difference across the methods, not a detail:
@@ -247,12 +261,12 @@ therefore offers **two tiers**, and is explicit about which is which:
 
 | Method | **Python (faithful)** | **Excel (transparent proxy)** |
 |---|---|---|
-| HLW | 9-state IS+Phillips Kalman filter (MLE); LW low signal-to-noise (small fixed trend-shock variances); **long-run-neutrality level anchor** | `0.5·trend-growth + 0.5·trend-real-rate` |
+| HLW | 9-state IS+Phillips Kalman filter (MLE) with the **original two-lag real-rate-gap IS term** −(a_r/2)(r̃₋₁+r̃₋₂); LW low signal-to-noise (small fixed trend-shock variances); **long-run-neutrality level anchor** | `0.5·trend-growth + 0.5·trend-real-rate` |
 | DSGE | Consumption-Euler `r*=ρ+γg_c`; `g_c` = Kalman local-linear-trend of consumption, low signal-to-noise | same Euler formula, `g_c` via moving average — *near-exact* |
 | Imakubo NYC | **Same LW state space as HLW** but the IS curve uses a real *yield-curve* summary; r*=4cg+z (short end of the natural curve) | trailing trend of the real-curve midpoint |
 | Nakajima NYC | LW state space with the yield curve, **tighter growth anchor** (smaller z variance) | `0.5·trend-growth + 0.5·curve-level` |
 | Goy–Iwasaki | common stochastic trend of {short, long, growth} (Kalman), small trend variance | average of the three trends |
-| Del Negro VAR | 2-common-trend + AR(1)-cycle state space (MLE), small trend variance | `0.7·trend-real-rate + 0.3·trend-growth` |
+| Del Negro VAR | **3-common-trend** + AR(1)-cycle state space (MLE) on {real short, real 10y, growth, inflation}: trend real rate **f_r = r\***, a **convenience/term-premium trend f_sp** wedging the long rate (the paper's safety/liquidity mechanism), and trend inflation | `0.7·trend-real-rate + 0.3·trend-growth` |
 
 **On smoothing — consistent with the originals.** None of the source papers use
 an HP filter; they all get a smooth r\* from **state-space stochastic trends with
@@ -332,6 +346,12 @@ exception: it now carries an explicit long-run-neutrality level anchor.)
 revision-prone under one-sided filtering; BoJ's sample window, real-time
 vintages and (for some methods) judgmental calibration differ from a from-FRED
 rebuild, which shifts levels by a few tenths.
+
+**Validation harness.** BoJ's Chart 3 estimates are bundled (with attribution)
+at `data/boj/boj_chart3_estimates.csv`; `python scripts/validate_vs_boj.py`
+prints, per method, our latest level vs BoJ's, the mean gap and correlation
+over the overlapping sample, and qoq volatility — making the comparison above a
+one-command, falsifiable check after every data refresh.
 
 **Bottom line:** the wider band is mostly an artifact of the **synthetic test
 data** plus the deliberately **simplified estimators**, amplified for the two

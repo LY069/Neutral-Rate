@@ -67,6 +67,20 @@ Outputs land in `python/output/`:
 - `method_params.json` — the estimated parameters of every model
 - `r_star_chart.png` — the comparison chart
 
+```bash
+# 3. Validate against BoJ's published Chart 3 estimates (one command)
+python scripts/validate_vs_boj.py
+```
+
+### Japan-specific data handling (on by default)
+- **Consumption-tax adjustment**: the 1989/1997/2014/2019 hikes mechanically
+  lift YoY CPI for four quarters (~+1.2/+1.5/+2.0/+0.5pp). The toolkit strips
+  these (BoJ-style tax-adjusted inflation) before building expectations and
+  real rates. Toggle/edit windows in `config.py`
+  (`ADJUST_CONSUMPTION_TAX`, `CONSUMPTION_TAX_EFFECTS`).
+- **Real consumption**: the DSGE uses constant-price consumption
+  (`NAEXKP02JPQ659S`); a nominal series here would bias its r\* upward.
+
 **That's it.** Adding the new quarter is fully automatic — the data layer
 re-downloads, re-aligns to quarterly, rebuilds all derived features (real rates,
 inflation, gaps), and the six estimators re-run.
@@ -125,7 +139,7 @@ Set this up once and thereafter just press **Data ▸ Refresh All**.
 | Column on `Data` | FRED id |
 |---|---|
 | `real_gdp` | `JPNRGDPEXP` |
-| `consumption` | `JPNPFCEQDSMEI` |
+| `consumption` (constant prices — do **not** swap in nominal `JPNPFCEQDSMEI`) | `NAEXKP02JPQ659S` |
 | `core_cpi_yoy` (core CPI, YoY %) | `CPGRLE01JPQ657N` |
 | `cpi` (all-items, fallback) | `JPNCPIALLMINMEI` |
 | `short_rate` | `IRSTCI01JPM156N` |
