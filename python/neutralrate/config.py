@@ -54,16 +54,34 @@ FRED_SERIES: dict[str, str] = {
 # date so a future discontinuation is visible.  Re-order / extend if FRED
 # renames a series again.
 #
-# All-items CPI INDEX (YoY is computed from it); maintained "JPN...IX" family
-# first, the discontinued MEI index last as a long-history backstop:
+# Each candidate is resolved by data.fetch_any and may be ANY of:
+#   - a local CSV path (date,value)            e.g. an e-Stat / Statistics Bureau export
+#   - 'estat:STATSDATAID[:CDCAT01]'            Statistics Bureau of Japan e-Stat API
+#                                              (set ESTAT_APP_ID; opt-in, validated)
+#   - a DBnomics code 'PROVIDER/DATASET/SERIES'
+#   - a FRED series id
+# The AUTHORITATIVE source is the Statistics Bureau of Japan (it won't silently
+# die like the OECD FRED mirror).  The default lists therefore try a local
+# Statistics-Bureau CSV FIRST (shipped empty in data/cpi/ - see its README for
+# how to populate it from e-Stat), then maintained FRED series, then the
+# discontinued OECD-MEI series only as a last-resort long-history backstop.
+_CPI_DIR = os.path.join(_ROOT, "data", "cpi")
+# All-items CPI INDEX (YoY computed from it):
 CPI_INDEX_CANDIDATES: list[str] = [
-    "JPNCPALTT01IXNBM",   # CPI all items, index, NSA, monthly  (maintained)
-    "JPNCPALTT01IXOBM",   # CPI all items, index, SA,  monthly  (maintained)
+    os.path.join(_CPI_DIR, "jp_cpi_allitems_index.csv"),  # Statistics Bureau (best)
+    # "estat:0003427113",  # e.g. e-Stat 2020-base CPI monthly (set your statsDataId)
+    "JPNCPALTT01IXNBM",   # CPI all items, index, NSA, monthly  (FRED, maintained?)
+    "JPNCPALTT01IXOBM",   # CPI all items, index, SA,  monthly  (FRED, maintained?)
     "JPNCPIALLMINMEI",    # OECD MEI all-items index             (ends Jun 2021)
 ]
-# Core (ex food & energy) YoY % candidates; used only if not stale vs all-items:
+# CORE-CORE (ex fresh food & energy) YoY %, the HLW-appropriate underlying gauge
+# and the closest analog to the US "core" used by HLW/Del Negro.  PREFER BoJ's
+# "Indicators for Core CPI" series, which is already EXCLUDING the consumption-tax
+# hikes (if you use it, set ADJUST_CONSUMPTION_TAX=False below).  Used only when
+# not stale vs all-items.
 CORE_CPI_CANDIDATES: list[str] = [
-    "CPGRLE01JPM659N",    # core, YoY %, monthly   (OECD; may be discontinued)
+    os.path.join(_CPI_DIR, "jp_core_core_yoy.csv"),  # BoJ/StatBureau core-core (best)
+    "CPGRLE01JPM659N",    # core, YoY %, monthly   (FRED/OECD; may be discontinued)
     "CPGRLE01JPQ657N",    # core, growth, quarterly (OECD MEI; ends Jun 2021)
 ]
 
@@ -140,6 +158,10 @@ INFLATION_EXPECTATION_LONG_WINDOW = 20   # quarters in the long-run anchor proxy
 #   2019Q4-2020Q3  8% -> 10% (food kept at 8%,
 #                   free-education offsets)    ~ +0.5
 # Applied to the YoY inflation path when ADJUST_CONSUMPTION_TAX is True.
+# IMPORTANT: set this to False if your CPI input is ALREADY tax-excluded (e.g.
+# BoJ's "Indicators for Core CPI"), otherwise the tax effect is removed twice.
+# Magnitudes below are calibrated to headline CPI; core-core pass-through is
+# similar but not identical, so the BoJ tax-excluded series is the cleaner route.
 ADJUST_CONSUMPTION_TAX = True
 CONSUMPTION_TAX_EFFECTS: list[tuple[str, str, float]] = [
     ("1989-04-01", "1990-03-31", 1.2),

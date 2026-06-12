@@ -196,8 +196,16 @@ The single most useful artifact: **what each model actually consumes and produce
 | 10-year JGB yield | `IRLTLT01JPM156N` | curve long end |
 | Working-age population | `LFWA64TTJPM647S` | per-capita / demographics |
 
-Two Japan-specific data-handling points a careful replication must get right:
+Three Japan-specific data-handling points a careful replication must get right:
 
+0. **Inflation concept = core, not headline.** HLW (and Del Negro for the US)
+   deflate with *core* inflation (ex food & energy) to strip volatile items; the
+   Japan analog is **"core-core" = CPI ex fresh food & energy** (BoJ's traditional
+   "core" = ex fresh food is an acceptable alternative). The toolkit's `cpi`/
+   `core` candidate lists (config) prefer the Statistics-Bureau / BoJ core-core;
+   the DSGE here is consumption-driven so the CPI choice doesn't enter it. The
+   OECD CPI series on FRED were discontinued at June 2021, so live runs should
+   use the Statistics Bureau of Japan / BoJ source (see `data/cpi/README.md`).
 1. **Real, not nominal, consumption.** The superficially obvious FRED series
    `JPNPFCEQDSMEI` is *current-price* (nominal) consumption — and discontinued.
    Using it would inflate the DSGE's trend consumption growth by the deflator
@@ -208,7 +216,9 @@ Two Japan-specific data-handling points a careful replication must get right:
    free-education offset; 1989 ≈ +1.2pp). BoJ works with tax-adjusted CPI, and
    so does the toolkit (`ADJUST_CONSUMPTION_TAX` in `config.py`, windows and
    magnitudes documented there). Unadjusted, the spikes contaminate expected
-   inflation and ex-ante real rates exactly at sample-sensitive moments.
+   inflation and ex-ante real rates exactly at sample-sensitive moments. BoJ's
+   "Indicators for Core CPI" is published *already* tax-excluded — if you feed
+   that in, turn `ADJUST_CONSUMPTION_TAX` off to avoid removing the tax twice.
 
 **Inflation expectations — handled three ways, matching the originals.** This is
 a genuine point of difference across the methods, not a detail:

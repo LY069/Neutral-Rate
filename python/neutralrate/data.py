@@ -145,16 +145,84 @@ def _fetch_dbnomics(code: str, retries: int = 4) -> pd.Series:
     raise RuntimeError(f"DBnomics fetch failed for {code}: {last_err}")
 
 
-def fetch_expectations(spec: str) -> pd.Series:
-    """Load an inflation-expectations series from any supported source.
+def _estat_time_to_date(t: str):
+    """Decode an e-Stat 10-digit @time code to a month-start Timestamp.
+    Monthly codes carry the month in positions [6:8] (year in [0:4]); codes
+    with no month are treated as annual (December).  Returns None if unparseable."""
+    t = str(t)
+    if len(t) < 4 or not t[:4].isdigit():
+        return None
+    year = int(t[:4])
+    mm = t[6:8] if len(t) >= 8 else ""
+    if mm.isdigit() and 1 <= int(mm) <= 12:
+        return pd.Timestamp(year, int(mm), 1)
+    return pd.Timestamp(year, 12, 1)
 
-    spec may be:
-      * a local CSV path (date,value columns) - e.g. a BoJ Tankan export,
-      * a DBnomics code 'PROVIDER/DATASET/SERIES' (contains '/'),
-      * otherwise a FRED series id.
+
+ESTAT_URL = "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData"
+
+
+def _fetch_estat(spec: str, retries: int = 4) -> pd.Series:
+    """Fetch a series from the Statistics Bureau of Japan via the e-Stat API.
+
+    spec form: 'estat:STATSDATAID' or 'estat:STATSDATAID:CDCAT01' (an optional
+    cdCat01 item filter, e.g. the CPI 'All items' or 'All items less fresh food
+    and energy' code).  Requires the free application id in env ESTAT_APP_ID.
+
+    NOTE: opt-in (not in the default candidate lists).  The @time decoding can
+    vary by table, so the result is validated and a mis-parse RAISES (so the
+    candidate machinery skips it) rather than silently feeding wrong dates.
+    Verify with `refresh_data.py --check`; the local-CSV route is the tested one.
     """
-    # Route by spec shape: a .csv (or an existing local file) -> CSV reader;
-    # a 'PROVIDER/DATASET/SERIES' code -> DBnomics; otherwise a FRED id.
+    app_id = os.environ.get("ESTAT_APP_ID")
+    if not app_id:
+        raise RuntimeError(f"ESTAT_APP_ID env var not set (needed for {spec})")
+    parts = spec.split(":", 2)[1:]
+    stats_id = parts[0]
+    cat = parts[1] if len(parts) > 1 and parts[1] else None
+    params = {"appId": app_id, "statsDataId": stats_id, "limit": 100000}
+    if cat:
+        params["cdCat01"] = cat
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(ESTAT_URL, params=params, timeout=60)
+            r.raise_for_status()
+            values = (r.json()["GET_STATS_DATA"]["STATISTICAL_DATA"]
+                      ["DATA_INF"]["VALUE"])
+            dates, vals = [], []
+            for v in values:
+                d = _estat_time_to_date(v.get("@time", ""))
+                if d is None:
+                    continue
+                try:
+                    val = float(v["$"])
+                except (ValueError, TypeError, KeyError):
+                    continue
+                dates.append(d); vals.append(val)
+            s = pd.Series(vals, index=pd.to_datetime(dates)).sort_index()
+            s = s[~s.index.duplicated(keep="last")]
+            now = pd.Timestamp.now()
+            if s.empty or s.index.min().year < 1950 or s.index.max() > now + pd.Timedelta(days=120):
+                raise RuntimeError(f"e-Stat response for {spec} parsed implausibly "
+                                   f"(check statsDataId / cdCat01)")
+            s.name = spec
+            return s
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"e-Stat fetch failed for {spec}: {last_err}")
+
+
+def fetch_any(spec: str) -> pd.Series:
+    """Load a series from any supported source, routed by the spec shape:
+      * 'estat:STATSDATAID[:CDCAT01]'  -> Statistics Bureau of Japan (e-Stat API)
+      * a local CSV path (date,value)  -> CSV reader (e.g. an e-Stat / BoJ export)
+      * 'PROVIDER/DATASET/SERIES'      -> DBnomics
+      * otherwise                      -> a FRED series id
+    """
+    if spec.startswith("estat:"):
+        return _fetch_estat(spec)
     if spec.lower().endswith(".csv") or os.path.exists(spec):
         df = pd.read_csv(spec)
         date_col, val_col = df.columns[0], df.columns[1]
@@ -164,6 +232,10 @@ def fetch_expectations(spec: str) -> pd.Series:
     if "/" in spec:
         return _fetch_dbnomics(spec)
     return fetch_series(spec)
+
+
+# Back-compat alias (inflation-expectations hooks use the same dispatch).
+fetch_expectations = fetch_any
 
 
 # --------------------------------------------------------------------------- #
@@ -188,7 +260,7 @@ def _fetch_freshest(candidates, name):
     best = (None, None, None)
     for sid in candidates:
         try:
-            s = fetch_series(sid).dropna()
+            s = fetch_any(sid).dropna()
         except Exception as exc:  # noqa: BLE001
             print(f"[neutralrate] {name}: candidate {sid} unavailable ({exc}).")
             continue
