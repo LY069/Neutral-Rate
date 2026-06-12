@@ -28,6 +28,7 @@ import requests
 from .config import (
     ADJUST_CONSUMPTION_TAX,
     CONSUMPTION_TAX_EFFECTS,
+    CONSUMPTION_TAX_LEVEL_EFFECTS,
     CORE_CPI_CANDIDATES,
     CPI_INDEX_CANDIDATES,
     FRED_SERIES,
@@ -337,6 +338,22 @@ def _tax_adjust(infl: pd.Series, yoy: bool) -> pd.Series:
     return adj
 
 
+def tax_excluded_index(index: pd.Series) -> pd.Series:
+    """Remove the consumption-tax effect from a CPI *index* (the correct,
+    level-based method).  Divide by a cumulative multiplicative wedge that steps
+    up at each hike by its price-level impact (config.CONSUMPTION_TAX_LEVEL_EFFECTS).
+    Returns the tax-excluded index; YoY of the result is free of the hike spikes.
+    This reconstructs BoJ's "excluding consumption-tax effects" core-core from the
+    longer Statistics-Bureau raw index (see scripts/build_core_core.py)."""
+    if not ADJUST_CONSUMPTION_TAX:
+        return index
+    s = index.dropna()
+    factor = pd.Series(1.0, index=s.index)
+    for date, pp in CONSUMPTION_TAX_LEVEL_EFFECTS:
+        factor.loc[s.index >= pd.Timestamp(date)] *= (1.0 + pp / 100.0)
+    return s / factor
+
+
 def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     """Construct the model-ready variables (logs, gaps, real rates, inflation).
 
@@ -374,7 +391,9 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     # stale relative to the interest-rate data.
     allitems = None
     if "cpi" in df and df["cpi"].notna().any():
-        allitems = _tax_adjust(100.0 * np.log(df["cpi"]).diff(4), yoy=True)
+        # De-tax on the index (level-based, correct), then take YoY.
+        allitems = 100.0 * np.log(tax_excluded_index(df["cpi"])).diff(4)
+        allitems = allitems.reindex(df.index)
     core = None
     if "core_cpi_yoy" in df and df["core_cpi_yoy"].notna().any():
         core = _tax_adjust(df["core_cpi_yoy"], yoy=True)

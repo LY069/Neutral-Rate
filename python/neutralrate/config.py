@@ -169,6 +169,17 @@ CONSUMPTION_TAX_EFFECTS: list[tuple[str, str, float]] = [
     ("2014-04-01", "2015-03-31", 2.0),
     ("2019-10-01", "2020-09-30", 0.5),
 ]
+# Price-LEVEL impacts (%) at each hike's implementation month - the correct
+# representation for de-taxing a CPI *index* (a one-time permanent level jump,
+# numerically equal to the YoY pp boost above).  Used by tax_excluded_index()
+# and scripts/build_core_core.py to reconstruct BoJ's tax-excluded core-core
+# from the longer Statistics-Bureau raw index.
+CONSUMPTION_TAX_LEVEL_EFFECTS: list[tuple[str, float]] = [
+    ("1989-04-01", 1.2),
+    ("1997-04-01", 1.5),
+    ("2014-04-01", 2.0),
+    ("2019-10-01", 0.5),
+]
 
 
 # --------------------------------------------------------------------------- #
