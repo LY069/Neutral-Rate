@@ -83,42 +83,89 @@ def _get(endpoint: str, params: dict, retries: int = 3) -> dict:
 # Commands
 # ---------------------------------------------------------------------------
 
-def cmd_search(keyword: str) -> None:
-    """Search the e-Stat catalogue for tables matching keyword."""
-    print(f"Searching e-Stat for: '{keyword}' ...\n")
-    data = _get("getStatsList", {
-        "searchWord": keyword,
-        "lang": "E",          # English metadata where available
-        "statsField": "03",   # Statistics field: prices (03)
-        "surveyYears": "2020",
-        "limit": 20,
-    })
+# The Statistics Bureau "Consumer Price Index" government-statistics code.
+# Filtering getStatsList by statsCode is far more reliable than a free-text
+# keyword: e-Stat's catalogue is indexed primarily in Japanese, so an English
+# searchWord often returns nothing.
+CPI_STATS_CODE = "00200573"           # 消費者物価指数 (Statistics Bureau)
+CPI_KEYWORD_JA = "消費者物価指数"      # Japanese fallback keyword
+
+
+def _run_search(params: dict) -> list[dict]:
+    """Run one getStatsList query and normalise the TABLE_INF list."""
+    data = _get("getStatsList", params)
     tables = (data.get("GET_STATS_LIST", {})
                   .get("DATALIST_INF", {})
                   .get("TABLE_INF", []))
     if isinstance(tables, dict):
         tables = [tables]
+    return tables
+
+
+def cmd_search(keyword: str) -> None:
+    """Find CPI tables in the e-Stat catalogue.
+
+    Strategy (most reliable first):
+      1. by the Statistics Bureau CPI statsCode (00200573) — no keyword needed;
+      2. fall back to the Japanese keyword 消費者物価指数 if (1) is empty;
+      3. finally the user's free-text keyword.
+    No statsField/surveyYears restriction (those filtered out current data)."""
+    tables: list[dict] = []
+    used = ""
+    # 1. statsCode — the robust path
+    try:
+        tables = _run_search({"statsCode": CPI_STATS_CODE, "limit": 50})
+        used = f"statsCode={CPI_STATS_CODE}"
+    except Exception:  # noqa: BLE001
+        tables = []
+    # 2. Japanese keyword fallback
     if not tables:
-        print("No tables found. Try a broader keyword (e.g. 'price index').")
-        print("Or search without statsField restriction by editing this script.")
+        tables = _run_search({"searchWord": CPI_KEYWORD_JA, "limit": 50})
+        used = f"searchWord='{CPI_KEYWORD_JA}'"
+    # 3. the user's keyword, last resort
+    if not tables:
+        tables = _run_search({"searchWord": keyword, "limit": 50})
+        used = f"searchWord='{keyword}'"
+
+    print(f"Searched e-Stat ({used}).\n")
+    if not tables:
+        print("No tables found even by statsCode. Check ESTAT_APP_ID is valid and")
+        print("that your network can reach api.e-stat.go.jp. You can also browse the")
+        print("table manually at https://www.e-stat.go.jp/en/stat-search/files and read")
+        print("its statsDataId from the URL, then go straight to --meta <id>.")
         return
 
-    print(f"{'ID':<16} {'Title'}")
-    print("-" * 80)
-    for t in tables:
+    # Prefer monthly, all-Japan, 2020-base tables — surface those first.
+    def _score(t: dict) -> int:
+        title = t.get("TITLE", {})
+        title = title.get("$", "") if isinstance(title, dict) else str(title)
+        blob = (title + str(t.get("CYCLE", "")) + str(t.get("STATISTICS_NAME", ""))).lower()
+        s = 0
+        if "monthly" in blob or "月" in blob:
+            s += 2
+        if "2020" in blob:
+            s += 2
+        if "all japan" in blob or "全国" in blob:
+            s += 1
+        return -s  # sort ascending -> best first
+
+    tables.sort(key=_score)
+
+    print(f"{'ID':<16} Title  (cycle, latest survey)")
+    print("-" * 90)
+    for t in tables[:30]:
         tid = t.get("@id", "?")
         title = t.get("TITLE", {})
         if isinstance(title, dict):
             title = title.get("$", title.get("#text", "?"))
-        stat_name = t.get("STAT_NAME", {})
-        if isinstance(stat_name, dict):
-            stat_name = stat_name.get("$", "")
+        stat_name = t.get("STATISTICS_NAME", "")
         cycle = t.get("CYCLE", "")
         survey_date = t.get("SURVEY_DATE", "")
-        print(f"  {tid:<14} {stat_name}: {title} ({cycle}, {survey_date})")
+        print(f"  {tid:<14} {stat_name} {title} ({cycle}, {survey_date})")
 
-    print(f"\nFound {len(tables)} table(s). Run --meta <id> on the one that looks right.")
-    print("Typical 2020-base monthly CPI table ids start with '00034...'")
+    print(f"\nFound {len(tables)} table(s). Pick the MONTHLY, 2020-base, all-Japan one")
+    print("(its title mentions '2020-base', 'Monthly', 'All Japan' / '全国'), then run:")
+    print("    python3 scripts/estat_setup.py --meta <that ID>")
 
 
 def cmd_meta(stats_id: str) -> None:
