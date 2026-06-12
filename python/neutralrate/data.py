@@ -28,6 +28,8 @@ import requests
 from .config import (
     ADJUST_CONSUMPTION_TAX,
     CONSUMPTION_TAX_EFFECTS,
+    CORE_CPI_CANDIDATES,
+    CPI_INDEX_CANDIDATES,
     FRED_SERIES,
     INFLATION_EXPECTATION_LONG_WINDOW,
     INFLATION_EXPECTATION_WINDOW,
@@ -178,12 +180,43 @@ def _to_quarterly(s: pd.Series, logical_name: str) -> pd.Series:
     return q
 
 
+def _fetch_freshest(candidates, name):
+    """Fetch each candidate FRED id; return (quarterly series, id, last_date) for
+    the one whose data extends furthest. Skips dead/unreachable candidates so a
+    discontinued series (e.g. the OECD-MEI CPI, frozen at 2021) is never used
+    when a maintained one exists."""
+    best = (None, None, None)
+    for sid in candidates:
+        try:
+            s = fetch_series(sid).dropna()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[neutralrate] {name}: candidate {sid} unavailable ({exc}).")
+            continue
+        if s.empty:
+            continue
+        end = s.index.max()
+        if best[2] is None or end > best[2]:
+            best = (_to_quarterly(s, name), sid, end)
+    return best
+
+
 def fetch_raw_panel() -> pd.DataFrame:
     """Fetch every configured series from FRED and align to quarterly."""
     cols = {}
     for logical, fred_id in FRED_SERIES.items():
         raw = fetch_series(fred_id)
         cols[logical] = _to_quarterly(raw, logical)
+
+    # CPI: pick the freshest live candidate (the OECD-MEI family ends 2021).
+    cpi_q, cpi_id, cpi_end = _fetch_freshest(CPI_INDEX_CANDIDATES, "cpi")
+    if cpi_q is not None:
+        cols["cpi"] = cpi_q
+        print(f"[neutralrate] cpi <- {cpi_id} (ends {cpi_end.date()})")
+    core_q, core_id, core_end = _fetch_freshest(CORE_CPI_CANDIDATES, "core_cpi_yoy")
+    if core_q is not None:
+        cols["core_cpi_yoy"] = core_q
+        print(f"[neutralrate] core_cpi_yoy <- {core_id} (ends {core_end.date()})")
+
     # optional dedicated survey expectation series (FRED / DBnomics / CSV).
     # Missing/empty/unreachable -> warn once and fall back to the proxy.
     def _try_expectations(spec, name):
@@ -261,16 +294,44 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     df["gdp_growth"] = 4.0 * df["log_gdp"].diff()
     df["cons_growth"] = 4.0 * df["log_cons"].diff()
 
-    # Inflation.  Prefer the OECD core (ex food & energy) YoY series - the
-    # HLW-appropriate measure - and fall back to all-items CPI when absent
-    # (e.g. the offline synthetic sample or a re-pointed config).
+    # Inflation (YoY %, consumption-tax adjusted).  Build both a core measure
+    # (HLW-appropriate) and an all-items measure, then use whichever is FRESHER:
+    # this prevents a discontinued core series (OECD MEI ends 2021) from silently
+    # freezing every inflation-dependent method while a maintained all-items
+    # series is available.  A loud warning fires if even the chosen series is
+    # stale relative to the interest-rate data.
+    allitems = None
+    if "cpi" in df and df["cpi"].notna().any():
+        allitems = _tax_adjust(100.0 * np.log(df["cpi"]).diff(4), yoy=True)
+    core = None
     if "core_cpi_yoy" in df and df["core_cpi_yoy"].notna().any():
-        df["inflation"] = _tax_adjust(df["core_cpi_yoy"], yoy=True)
-        df["inflation_yoy"] = df["inflation"]
+        core = _tax_adjust(df["core_cpi_yoy"], yoy=True)
+
+    def _last(s):
+        return None if s is None else s.last_valid_index()
+
+    if core is not None and allitems is not None:
+        core_fresh = _last(core) >= _last(allitems) - pd.Timedelta(days=185)
+        inflation, src = (core, "core CPI") if core_fresh else \
+            (allitems, "all-items CPI (core series stale)")
+    elif core is not None:
+        inflation, src = core, "core CPI"
+    elif allitems is not None:
+        inflation, src = allitems, "all-items CPI"
     else:
-        log_cpi = 100.0 * np.log(df["cpi"])
-        df["inflation"] = _tax_adjust(4.0 * log_cpi.diff(), yoy=False)
-        df["inflation_yoy"] = _tax_adjust(log_cpi.diff(4), yoy=True)
+        raise ValueError("No CPI series available to build inflation.")
+    df["inflation"] = inflation
+    df["inflation_yoy"] = inflation
+    print(f"[neutralrate] inflation source: {src} (ends {_last(inflation).date()})")
+
+    rate_last = df["short_rate"].last_valid_index() if "short_rate" in df else None
+    if rate_last is not None and _last(inflation) is not None:
+        stale_q = (rate_last.to_period("Q") - _last(inflation).to_period("Q")).n
+        if stale_q > 2:
+            print(f"[neutralrate] WARNING: inflation ({src}) ends "
+                  f"{_last(inflation).date()} but rates end {rate_last.date()} "
+                  f"- {stale_q} quarters stale; recent r* will be missing for the "
+                  f"CPI-based methods. Check / re-point the CPI candidates in config.")
 
     # --- Expected inflation, two horizons -------------------------------- #
     # Proxies (always computed): SHORT = 4q MA of core (the HLW expectation);

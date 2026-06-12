@@ -36,10 +36,7 @@ FRED_SERIES: dict[str, str] = {
                                        # prices (real), SA.  NB: the superficially
                                        # similar JPNPFCEQDSMEI is CURRENT prices
                                        # (nominal) and discontinued - do not use.
-    # --- Prices (monthly -> quarterly) -------------------------------------
-    "cpi": "JPNCPIALLMINMEI",          # CPI, all items, index (fallback)
-    "core_cpi_yoy": "CPGRLE01JPQ657N",  # Core CPI (ex food & energy), YoY %, Q
-                                        # OECD - the HLW-appropriate inflation input
+    # --- Prices: handled via freshest-live candidate lists (see below) ------
     # --- Interest rates (monthly -> quarterly averages) --------------------
     "short_rate": "IRSTCI01JPM156N",   # Call money / interbank, < 24h  (policy)
     "rate_3m": "IR3TIB01JPM156N",      # 3-month interbank rate
@@ -47,6 +44,28 @@ FRED_SERIES: dict[str, str] = {
     # --- Demographics (for trend-growth / DSGE drivers) --------------------
     "working_age_pop": "LFWA64TTJPM647S",  # Working-age population (15-64)
 }
+
+# CRITICAL - CPI series are fetched via FRESHEST-LIVE candidate lists, NOT the
+# loop above.  The OECD "Main Economic Indicators" Japan CPI family
+# (JPNCPIALLMINMEI, CPALTT01JP*657N, CPGRLE01JP*657N) was DISCONTINUED at
+# June 2021; pointing at it silently freezes every inflation-dependent method
+# at 2021.  data.fetch_raw_panel fetches each candidate and keeps the one with
+# the most recent observation; refresh_data.py --check reports each series' last
+# date so a future discontinuation is visible.  Re-order / extend if FRED
+# renames a series again.
+#
+# All-items CPI INDEX (YoY is computed from it); maintained "JPN...IX" family
+# first, the discontinued MEI index last as a long-history backstop:
+CPI_INDEX_CANDIDATES: list[str] = [
+    "JPNCPALTT01IXNBM",   # CPI all items, index, NSA, monthly  (maintained)
+    "JPNCPALTT01IXOBM",   # CPI all items, index, SA,  monthly  (maintained)
+    "JPNCPIALLMINMEI",    # OECD MEI all-items index             (ends Jun 2021)
+]
+# Core (ex food & energy) YoY % candidates; used only if not stale vs all-items:
+CORE_CPI_CANDIDATES: list[str] = [
+    "CPGRLE01JPM659N",    # core, YoY %, monthly   (OECD; may be discontinued)
+    "CPGRLE01JPQ657N",    # core, growth, quarterly (OECD MEI; ends Jun 2021)
+]
 
 # Maturities (in years) available for the term-structure / natural-yield-curve
 # methods, mapped to the logical names above.  Extend this dict if you add more

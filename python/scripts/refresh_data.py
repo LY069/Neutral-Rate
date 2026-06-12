@@ -40,7 +40,21 @@ def main():
     raw.to_csv(cache)
     print(f"\nFetched {len(raw)} quarters, {raw.index.min().date()} -> "
           f"{raw.index.max().date()}")
-    print("Latest observations:")
+
+    # Per-series last valid (non-NaN) date - the quickest way to spot a
+    # discontinued FRED series (which would freeze the dependent methods).
+    print("Last valid observation by series (watch for any stuck in the past):")
+    newest = raw.apply(lambda s: s.last_valid_index())
+    overall = newest.max()
+    for col in raw.columns:
+        last = newest[col]
+        flag = ""
+        if last is not None and overall is not None:
+            behind = (overall.to_period("Q") - last.to_period("Q")).n
+            flag = f"   <-- STALE ({behind}q behind)" if behind > 2 else ""
+        print(f"   {col:<18} {str(last.date()) if last is not None else 'EMPTY':<12}{flag}")
+
+    print("\nLatest observations:")
     print(raw.tail(4).round(3).to_string())
     print(f"\nCache written: {cache}")
 

@@ -72,6 +72,19 @@ Outputs land in `python/output/`:
 python scripts/validate_vs_boj.py
 ```
 
+### Watch for discontinued FRED series (important)
+`refresh_data.py --check` now prints the **last valid date of every series** and
+flags any stuck in the past (`<-- STALE`). This matters because FRED's OECD
+"Main Economic Indicators" Japan CPI family (`JPNCPIALLMINMEI`, `CPALTT01JP*657N`,
+`CPGRLE01JP*657N`) was **discontinued at June 2021** — using it silently freezes
+every inflation-dependent method at 2021. The toolkit defends against this: CPI
+is fetched from a **prioritised candidate list** (`CPI_INDEX_CANDIDATES`,
+`CORE_CPI_CANDIDATES` in `config.py`) and the **freshest live** series is used;
+if the core series is stale it falls back to all-items automatically, and a
+`WARNING` prints if even the best CPI ends well before the rate data. If `--check`
+shows the chosen `cpi`/`core_cpi_yoy` are stale, re-point those lists to a
+maintained series and re-run.
+
 ### Japan-specific data handling (on by default)
 - **Consumption-tax adjustment**: the 1989/1997/2014/2019 hikes mechanically
   lift YoY CPI for four quarters (~+1.2/+1.5/+2.0/+0.5pp). The toolkit strips
@@ -140,8 +153,8 @@ Set this up once and thereafter just press **Data ▸ Refresh All**.
 |---|---|
 | `real_gdp` | `JPNRGDPEXP` |
 | `consumption` (constant prices — do **not** swap in nominal `JPNPFCEQDSMEI`) | `NAEXKP02JPQ659S` |
-| `core_cpi_yoy` (core CPI, YoY %) | `CPGRLE01JPQ657N` |
-| `cpi` (all-items, fallback) | `JPNCPIALLMINMEI` |
+| `cpi` (all-items index) — maintained | `JPNCPALTT01IXNBM` |
+| `core_cpi_yoy` (core CPI, YoY %) | `CPGRLE01JPM659N` |
 | `short_rate` | `IRSTCI01JPM156N` |
 | `rate_3m` | `IR3TIB01JPM156N` |
 | `rate_10y` | `IRLTLT01JPM156N` |
