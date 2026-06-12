@@ -344,9 +344,12 @@ def tax_excluded_index(index: pd.Series) -> pd.Series:
     up at each hike by its price-level impact (config.CONSUMPTION_TAX_LEVEL_EFFECTS).
     Returns the tax-excluded index; YoY of the result is free of the hike spikes.
     This reconstructs BoJ's "excluding consumption-tax effects" core-core from the
-    longer Statistics-Bureau raw index (see scripts/build_core_core.py)."""
-    if not ADJUST_CONSUMPTION_TAX:
-        return index
+    longer Statistics-Bureau raw index (see scripts/build_core_core.py).
+
+    NOTE: this is a PURE de-tax (it ALWAYS removes the wedge) - de-taxing is its
+    sole purpose, and build_core_core.py relies on it regardless of the global
+    ADJUST_CONSUMPTION_TAX flag.  Whether the toolkit de-taxes the all-items index
+    at all is gated separately at the call site in build_features()."""
     s = index.dropna()
     factor = pd.Series(1.0, index=s.index)
     for date, pp in CONSUMPTION_TAX_LEVEL_EFFECTS:
@@ -391,8 +394,11 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     # stale relative to the interest-rate data.
     allitems = None
     if "cpi" in df and df["cpi"].notna().any():
-        # De-tax on the index (level-based, correct), then take YoY.
-        allitems = 100.0 * np.log(tax_excluded_index(df["cpi"])).diff(4)
+        # De-tax on the index (level-based, correct), then take YoY.  Gated by
+        # the global flag: skip when the core series is already tax-excluded
+        # (e.g. the build_core_core.py output) to avoid removing the tax twice.
+        cpi_idx = tax_excluded_index(df["cpi"]) if ADJUST_CONSUMPTION_TAX else df["cpi"]
+        allitems = 100.0 * np.log(cpi_idx).diff(4)
         allitems = allitems.reindex(df.index)
     core = None
     if "core_cpi_yoy" in df and df["core_cpi_yoy"].notna().any():

@@ -68,19 +68,24 @@ FRED_SERIES: dict[str, str] = {
 _CPI_DIR = os.path.join(_ROOT, "data", "cpi")
 # All-items CPI INDEX (YoY computed from it):
 CPI_INDEX_CANDIDATES: list[str] = [
-    os.path.join(_CPI_DIR, "jp_cpi_allitems_index.csv"),  # Statistics Bureau (best)
-    # "estat:0003427113",  # e.g. e-Stat 2020-base CPI monthly (set your statsDataId)
+    "estat:0003427113:0001",  # SBJ 2020-base CPI, All items (live, authoritative)
+    os.path.join(_CPI_DIR, "jp_cpi_allitems_index.csv"),  # Statistics Bureau CSV
     "JPNCPALTT01IXNBM",   # CPI all items, index, NSA, monthly  (FRED, maintained?)
     "JPNCPALTT01IXOBM",   # CPI all items, index, SA,  monthly  (FRED, maintained?)
     "JPNCPIALLMINMEI",    # OECD MEI all-items index             (ends Jun 2021)
 ]
 # CORE-CORE (ex fresh food & energy) YoY %, the HLW-appropriate underlying gauge
-# and the closest analog to the US "core" used by HLW/Del Negro.  PREFER BoJ's
-# "Indicators for Core CPI" series, which is already EXCLUDING the consumption-tax
-# hikes (if you use it, set ADJUST_CONSUMPTION_TAX=False below).  Used only when
-# not stale vs all-items.
+# and the closest analog to the US "core" used by HLW/Del Negro.  NB: every entry
+# here must be a YoY % series (it is consumed directly as inflation), NOT an index.
+# The SBJ e-Stat core-core (estat:0003427113:0178) is an INDEX, so it is NOT listed
+# here - instead run scripts/build_core_core.py once to convert that index to a
+# tax-excluded YoY and write it to jp_core_core_yoy.csv (the first entry below):
+#     python scripts/build_core_core.py --raw "estat:0003427113:0178"
+# Because that output is already tax-excluded, ADJUST_CONSUMPTION_TAX is set False.
+# Used only when not stale vs all-items.
 CORE_CPI_CANDIDATES: list[str] = [
-    os.path.join(_CPI_DIR, "jp_core_core_yoy.csv"),  # BoJ/StatBureau core-core (best)
+    os.path.join(_CPI_DIR, "jp_core_core_yoy.csv"),  # SBJ core-core, tax-excluded YoY
+                                                     # (built by build_core_core.py)
     "CPGRLE01JPM659N",    # core, YoY %, monthly   (FRED/OECD; may be discontinued)
     "CPGRLE01JPQ657N",    # core, growth, quarterly (OECD MEI; ends Jun 2021)
 ]
@@ -158,11 +163,16 @@ INFLATION_EXPECTATION_LONG_WINDOW = 20   # quarters in the long-run anchor proxy
 #   2019Q4-2020Q3  8% -> 10% (food kept at 8%,
 #                   free-education offsets)    ~ +0.5
 # Applied to the YoY inflation path when ADJUST_CONSUMPTION_TAX is True.
-# IMPORTANT: set this to False if your CPI input is ALREADY tax-excluded (e.g.
-# BoJ's "Indicators for Core CPI"), otherwise the tax effect is removed twice.
+# IMPORTANT: set this to False if your CPI input is ALREADY tax-excluded, otherwise
+# the tax effect is removed twice.  This toolkit's core-core comes from
+# scripts/build_core_core.py, whose OUTPUT (jp_core_core_yoy.csv) is already
+# tax-excluded - hence False below.  (build_core_core.py de-taxes via the PURE
+# tax_excluded_index() regardless of this flag, so the flag governs only whether
+# build_features de-taxes the all-items fallback.)  Set True only if you point the
+# core/all-items candidates at a RAW, tax-included series instead.
 # Magnitudes below are calibrated to headline CPI; core-core pass-through is
-# similar but not identical, so the BoJ tax-excluded series is the cleaner route.
-ADJUST_CONSUMPTION_TAX = True
+# similar but not identical, so the tax-excluded reconstruction is the cleaner route.
+ADJUST_CONSUMPTION_TAX = False
 CONSUMPTION_TAX_EFFECTS: list[tuple[str, str, float]] = [
     ("1989-04-01", "1990-03-31", 1.2),
     ("1997-04-01", "1998-03-31", 1.5),
