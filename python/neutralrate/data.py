@@ -163,12 +163,65 @@ def _estat_time_to_date(t: str):
 ESTAT_URL = "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData"
 
 
-def _fetch_estat(spec: str, retries: int = 4) -> pd.Series:
-    """Fetch a series from the Statistics Bureau of Japan via the e-Stat API.
+ESTAT_ALL_JAPAN_AREA = "00000"   # CPI area code for 全国 (All Japan)
 
-    spec form: 'estat:STATSDATAID' or 'estat:STATSDATAID:CDCAT01' (an optional
-    cdCat01 item filter, e.g. the CPI 'All items' or 'All items less fresh food
-    and energy' code).  Requires the free application id in env ESTAT_APP_ID.
+
+def _estat_pick_index_series(values: list[dict]) -> pd.Series:
+    """An e-Stat CPI table is a CUBE: item x area x tabulation(index/YoY/MoM) x time.
+    Filtering by cdCat01 alone still returns MULTIPLE series (e.g. the index AND its
+    year-on-year change, possibly several areas), which - collapsed naively to one
+    value per date - yields garbage (mixed index/percent, divide-by-zero in log).
+
+    This groups the returned VALUE rows by their full dimension key (every @attr
+    except @time/@unit/$) and selects ONE clean monthly INDEX series: the group
+    whose values look like a CPI index (median in ~[40, 1000], i.e. ~100, not a
+    small percent change), preferring the all-Japan area and the longest history."""
+    groups: dict[tuple, list[tuple]] = {}
+    for v in values:
+        d = _estat_time_to_date(v.get("@time", ""))
+        if d is None:
+            continue
+        try:
+            val = float(v["$"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        key = tuple(sorted((k, str(val2)) for k, val2 in v.items()
+                           if k.startswith("@") and k not in ("@time", "@unit")))
+        groups.setdefault(key, []).append((d, val))
+
+    if not groups:
+        raise RuntimeError("e-Stat response carried no decodable VALUE rows")
+
+    def _series(rows):
+        s = pd.Series([x[1] for x in rows], index=pd.to_datetime([x[0] for x in rows]))
+        return s.sort_index()[lambda z: ~z.index.duplicated(keep="last")]
+
+    scored = []
+    for key, rows in groups.items():
+        s = _series(rows)
+        med = s.abs().median()
+        index_like = 40.0 <= med <= 5000.0          # CPI index ~100; YoY% ~1-3
+        all_japan = any(k.endswith("area") and v == ESTAT_ALL_JAPAN_AREA for k, v in key)
+        scored.append((index_like, all_japan, len(s), s))
+    # prefer index-like, then all-Japan, then longest
+    scored.sort(key=lambda t: (t[0], t[1], t[2]), reverse=True)
+    best = scored[0]
+    if not best[0]:
+        raise RuntimeError("e-Stat returned no index-like series for this filter "
+                           "(values look like a percent change, not an index); "
+                           "specify the index tabulation via :area:tab in the spec")
+    return best[3]
+
+
+def _fetch_estat(spec: str, retries: int = 4) -> pd.Series:
+    """Fetch a CPI INDEX series from the Statistics Bureau of Japan via e-Stat.
+
+    spec form: 'estat:STATSDATAID[:CDCAT01[:CDAREA[:CDTAB]]]'
+      CDCAT01 - item code (e.g. CPI 'All items less fresh food and energy')
+      CDAREA  - area code (defaults to all-Japan 00000); pass '' to leave open
+      CDTAB   - tabulation code (index vs YoY change); optional - if omitted the
+                fetch auto-selects the INDEX series (median ~100, not a percent).
+    Requires the free application id in env ESTAT_APP_ID.
 
     NOTE: opt-in (not in the default candidate lists).  The @time decoding can
     vary by table, so the result is validated and a mis-parse RAISES (so the
@@ -178,37 +231,40 @@ def _fetch_estat(spec: str, retries: int = 4) -> pd.Series:
     app_id = os.environ.get("ESTAT_APP_ID")
     if not app_id:
         raise RuntimeError(f"ESTAT_APP_ID env var not set (needed for {spec})")
-    parts = spec.split(":", 2)[1:]
+    parts = spec.split(":")[1:]   # drop the 'estat' scheme
     stats_id = parts[0]
-    cat = parts[1] if len(parts) > 1 and parts[1] else None
-    params = {"appId": app_id, "statsDataId": stats_id, "limit": 100000}
+    cat  = parts[1] if len(parts) > 1 and parts[1] else None
+    area = parts[2] if len(parts) > 2 and parts[2] else ESTAT_ALL_JAPAN_AREA
+    tab  = parts[3] if len(parts) > 3 and parts[3] else None
+    base = {"appId": app_id, "statsDataId": stats_id, "limit": 100000}
     if cat:
-        params["cdCat01"] = cat
+        base["cdCat01"] = cat
+    if tab:
+        base["cdTab"] = tab
+
+    # Try with the area filter first; if it yields nothing, retry without it
+    # (area code can differ by table) and let _estat_pick_index_series sort it out.
     last_err: Exception | None = None
     for attempt in range(retries):
         try:
-            r = requests.get(ESTAT_URL, params=params, timeout=60)
-            r.raise_for_status()
-            values = (r.json()["GET_STATS_DATA"]["STATISTICAL_DATA"]
-                      ["DATA_INF"]["VALUE"])
-            dates, vals = [], []
-            for v in values:
-                d = _estat_time_to_date(v.get("@time", ""))
-                if d is None:
+            for params in ([{**base, "cdArea": area}, base] if area else [base]):
+                r = requests.get(ESTAT_URL, params=params, timeout=60)
+                r.raise_for_status()
+                values = (r.json()["GET_STATS_DATA"]["STATISTICAL_DATA"]
+                          ["DATA_INF"].get("VALUE", []))
+                if isinstance(values, dict):
+                    values = [values]
+                if not values:
                     continue
-                try:
-                    val = float(v["$"])
-                except (ValueError, TypeError, KeyError):
-                    continue
-                dates.append(d); vals.append(val)
-            s = pd.Series(vals, index=pd.to_datetime(dates)).sort_index()
-            s = s[~s.index.duplicated(keep="last")]
-            now = pd.Timestamp.now()
-            if s.empty or s.index.min().year < 1950 or s.index.max() > now + pd.Timedelta(days=120):
-                raise RuntimeError(f"e-Stat response for {spec} parsed implausibly "
-                                   f"(check statsDataId / cdCat01)")
-            s.name = spec
-            return s
+                s = _estat_pick_index_series(values)
+                now = pd.Timestamp.now()
+                if s.empty or s.index.min().year < 1950 \
+                        or s.index.max() > now + pd.Timedelta(days=120):
+                    raise RuntimeError(f"e-Stat response for {spec} parsed implausibly "
+                                       f"(check statsDataId / cdCat01)")
+                s.name = spec
+                return s
+            raise RuntimeError("e-Stat returned no VALUE rows for this filter")
         except Exception as exc:  # noqa: BLE001
             last_err = exc
             time.sleep(2 ** attempt)
