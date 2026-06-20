@@ -53,13 +53,16 @@ def test_tax_adjustment():
     from neutralrate.data import _tax_adjust, tax_excluded_index
 
     # tax_excluded_index is a PURE de-tax (always applied regardless of flag).
-    # After the Apr-2014 hike (+2.0pp level), a constant-100 index should drop
-    # to 100 / 1.02 ≈ 98.04; before the hike it must be unchanged.
-    idx = pd.date_range("2013-01-01", "2016-01-01", freq="MS")
+    # The wedge is CUMULATIVE from the first hike (1989), so:
+    #   - a date before ANY hike (pre Apr-1989) is unchanged;
+    #   - crossing the Apr-2014 hike divides the index by exactly 1.02
+    #     (isolated as a before/after ratio, independent of earlier hikes).
+    idx = pd.date_range("1985-01-01", "2016-01-01", freq="MS")
     s = pd.Series(100.0, index=idx)
     adj_idx = tax_excluded_index(s)
-    assert abs(adj_idx.loc["2013-01-01"] - 100.0) < 1e-9
-    assert abs(adj_idx.loc["2014-05-01"] - 100.0 / 1.02) < 0.01
+    assert abs(adj_idx.loc["1988-01-01"] - 100.0) < 1e-9          # before all hikes
+    ratio = adj_idx.loc["2014-05-01"] / adj_idx.loc["2014-03-01"]  # across Apr-2014
+    assert abs(ratio - 1.0 / 1.02) < 1e-6
 
     # _tax_adjust (YoY-window path) is gated by ADJUST_CONSUMPTION_TAX.
     # Test the correct outcome for whichever value the config currently carries.
