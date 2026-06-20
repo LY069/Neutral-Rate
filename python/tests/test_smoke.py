@@ -47,14 +47,29 @@ def test_nyc_ordering():
 
 
 def test_tax_adjustment():
-    """Consumption-tax effect is stripped from YoY inflation in the hike windows."""
+    """Consumption-tax de-tax: level-based pure path and flag-gated YoY-window path."""
     import pandas as pd
-    from neutralrate.data import _tax_adjust
-    idx = pd.date_range("2013-01-01", "2015-12-01", freq="QS")
-    s = pd.Series(1.0, index=idx)
-    adj = _tax_adjust(s, yoy=True)
-    assert abs(adj.loc["2014-07-01"] - (1.0 - 2.0)) < 1e-9   # inside FY2014 window
-    assert abs(adj.loc["2013-07-01"] - 1.0) < 1e-9           # outside untouched
+    from neutralrate import config
+    from neutralrate.data import _tax_adjust, tax_excluded_index
+
+    # tax_excluded_index is a PURE de-tax (always applied regardless of flag).
+    # After the Apr-2014 hike (+2.0pp level), a constant-100 index should drop
+    # to 100 / 1.02 ≈ 98.04; before the hike it must be unchanged.
+    idx = pd.date_range("2013-01-01", "2016-01-01", freq="MS")
+    s = pd.Series(100.0, index=idx)
+    adj_idx = tax_excluded_index(s)
+    assert abs(adj_idx.loc["2013-01-01"] - 100.0) < 1e-9
+    assert abs(adj_idx.loc["2014-05-01"] - 100.0 / 1.02) < 0.01
+
+    # _tax_adjust (YoY-window path) is gated by ADJUST_CONSUMPTION_TAX.
+    # Test the correct outcome for whichever value the config currently carries.
+    yoy = pd.Series(1.0, index=pd.date_range("2013-01-01", "2015-12-01", freq="QS"))
+    adj_yoy = _tax_adjust(yoy, yoy=True)
+    if config.ADJUST_CONSUMPTION_TAX:
+        assert abs(adj_yoy.loc["2014-07-01"] - (1.0 - 2.0)) < 1e-9  # stripped
+        assert abs(adj_yoy.loc["2013-07-01"] - 1.0) < 1e-9           # outside untouched
+    else:
+        assert (adj_yoy == yoy).all()  # pass-through: CPI input already tax-excluded
 
 
 if __name__ == "__main__":
