@@ -103,6 +103,18 @@ decomposition (you learn *why* r\* moved). **Weaknesses:** model-dependence — 
 inherits every assumption; cannot be reproduced in a spreadsheet; sensitive to the
 calibration of `γ` and `ρ`.
 
+> **Calibration of ρ (this toolkit: ρ = −0.8).** With `ρ = 0` the pure Euler rate
+> `r* = γ·g_c` sits ~0.8 pp **above** BoJ's published Okazaki–Sudo series, because
+> Japan's observed *safe* real rate lies below the consumption-Euler rate by a
+> sizeable **convenience/safety yield** on government debt (the same wedge Del
+> Negro models explicitly). We therefore let `ρ` absorb that steady-state
+> safe-asset wedge in addition to pure time preference and set `ρ = −0.8`, which
+> anchors the latest r\* into BoJ's recent **+0.2/+0.4** range. A residual gap in
+> the mid-1990s remains: BoJ's structural productivity trend falls faster than
+> this deliberately smooth per-capita consumption trend, so this is a
+> *trend-shape*, not a *level*, difference (loosening the trend does not help — it
+> just tracks the consumption series' own swings).
+
 ### Method 3 — Natural Yield Curve, Imakubo, Kojima & Nakajima (2015)
 **Family:** term structure. **Concept:** generalize the *single* natural rate to a
 *whole curve* of natural rates, one per maturity.
@@ -128,6 +140,20 @@ uncertainty. **Strengths:** combines the growth anchor (theory) with the term-
 structure information (data); reports the natural rate at multiple maturities.
 **Weaknesses:** more moving parts; results depend on the growth-trend estimate fed in.
 
+> **Implementation (this toolkit).** We take the refinement literally: r\* **is**
+> the secular trend of potential GDP growth (a local-linear-trend with the same
+> low signal-to-noise as the other methods), with its *level* pinned **halfway**
+> between the realized real-rate curve (where Imakubo's curve-anchored estimate
+> sits) and trend growth itself — i.e. Nakajima pulls the anchor partway from the
+> real rate toward growth, which keeps it above Imakubo whenever growth exceeds
+> the realized real rate (as in BoJ Chart 3). An earlier version used the LW
+> `4·c·g + z` short end with a *tighter z*; its "other factor" `z` drifted the
+> wrong way relative to BoJ's published Nakajima series (correlation only ~0.55)
+> and re-levelling to the high sample-mean trend growth left the level ~1 pp too
+> high. Anchoring directly to trend potential growth raises the correlation
+> (~0.61) and fixes the level. The yield curve still enters through the level
+> anchor and the natural 10y (r\* + the average real term spread).
+
 ### Method 5 — Macro-finance natural curve, Goy & Iwasaki (2024)
 **Family:** term structure / macro-finance. **Title:** *"From the Natural Rate
 towards a Natural Curve: A First Step to Benchmarking the Term Structure."*
@@ -142,6 +168,21 @@ naturally produces a term premium decomposition. **Weaknesses:** the most data- 
 specification-intensive; needs a real yield curve across maturities and a
 no-arbitrage/affine structure for full fidelity.
 
+> **Identification (this toolkit: loadings fixed to 1).** An earlier version
+> estimated the common trend's loadings on the long rate and growth *freely*. That
+> model is only weakly identified — with a near-constant common trend and three
+> free observation-noise variances the likelihood has a flat ridge along which one
+> noise variance collapses to zero and pins the trend to a single series — so the
+> estimate was **unstable** (it landed in different optima run-to-run under BLAS
+> non-determinism, giving r\* anywhere from −0.8 to +0.3) and its level drifted
+> ~1.2 pp above BoJ. The model's own economics supply the fix: in a Nelson–Siegel
+> curve the common **level** factor loads exactly 1 on every maturity, and r\*
+> tracks trend growth one-for-one (the LW logic), so the loadings are **1 by
+> construction, not free parameters**. The trend is then the genuine common level
+> (intercepts absorb the average term premium and growth-minus-rate wedge); this
+> is well-identified, deterministic, and ~0.7 pp closer to BoJ. A small floor on
+> the observation-noise std devs guarantees the ridge cannot reappear.
+
 ### Method 6 — VAR with common trends, Del Negro, Giannone, Giannoni & Tambalotti (2017)
 **Family:** reduced-form time series. **Title:** *"Safety, Liquidity, and the
 Natural Rate of Interest"* (Brookings). BOJ applied the same common-trends approach
@@ -155,6 +196,19 @@ contribution from slower trend growth. **Strengths:** few economic restrictions
 (lets the data speak), credible long-run trends, and an explicit safety/liquidity
 story. **Weaknesses:** little structural interpretation of the cycle; needs priors
 for stable trends; the convenience-yield block needs corporate-spread data.
+
+> **Trend/cycle split (this toolkit).** r\* = the trend real rate `f_r`. With the
+> trend-real-rate innovation set loosely (σ_fr = 0.07) and the cycle persistence
+> capped at 0.90, `f_r` **over-rotated**: it tracked the persistent 2022–24
+> real-rate plunge (policy at zero while inflation spiked) straight into the
+> *trend*, so r\* fell to ~−1.5 (≈1 pp **below** BoJ) even though it sat ~0.4 pp
+> *above* BoJ on average earlier. Two changes restore Del Negro's tight-prior
+> smoothness: **σ_fr = 0.04** (slower trend) and a **cycle-persistence cap of
+> 0.97** (so near-unit-root but still transitory swings are absorbed by the cycle,
+> not the trend). We also penalize a negative growth loading `φ` (economically
+> perverse, an artefact of weak identification). Together these halve the latest
+> gap and lower the mean gap, and — like the Goy–Iwasaki fix — make the estimate
+> deterministic across runs.
 
 ---
 
@@ -272,11 +326,11 @@ therefore offers **two tiers**, and is explicit about which is which:
 | Method | **Python (faithful)** | **Excel (transparent proxy)** |
 |---|---|---|
 | HLW | 9-state IS+Phillips Kalman filter (MLE) with the **original two-lag real-rate-gap IS term** −(a_r/2)(r̃₋₁+r̃₋₂); LW low signal-to-noise (small fixed trend-shock variances); **long-run-neutrality level anchor** | `0.5·trend-growth + 0.5·trend-real-rate` |
-| DSGE | Consumption-Euler `r*=ρ+γg_c`; `g_c` = Kalman local-linear-trend of consumption, low signal-to-noise | same Euler formula, `g_c` via moving average — *near-exact* |
+| DSGE | Consumption-Euler `r*=ρ+γg_c` with **ρ=−0.8** (time preference + safe-asset/convenience wedge); `g_c` = Kalman local-linear-trend of consumption, low signal-to-noise | same Euler formula, `g_c` via moving average — *near-exact* |
 | Imakubo NYC | **Same LW state space as HLW** but the IS curve uses a real *yield-curve* summary; r*=4cg+z (short end of the natural curve) | trailing trend of the real-curve midpoint |
-| Nakajima NYC | LW state space with the yield curve, **tighter growth anchor** (smaller z variance) | `0.5·trend-growth + 0.5·curve-level` |
-| Goy–Iwasaki | common stochastic trend of {short, long, growth} (Kalman), small trend variance | average of the three trends |
-| Del Negro VAR | **3-common-trend** + AR(1)-cycle state space (MLE) on {real short, real 10y, growth, inflation}: trend real rate **f_r = r\***, a **convenience/term-premium trend f_sp** wedging the long rate (the paper's safety/liquidity mechanism), and trend inflation | `0.7·trend-real-rate + 0.3·trend-growth` |
+| Nakajima NYC | r\* **= trend potential growth** (local-linear-trend), level set **halfway** between the realized real-rate curve and trend growth (`0.5·curve-level + 0.5·trend-growth`) | `0.5·trend-growth + 0.5·curve-level` |
+| Goy–Iwasaki | common stochastic trend (Nelson–Siegel **level**) of {short, long, growth}, **loadings fixed to 1** (well-identified), small trend variance + obs-noise floor | average of the three trends |
+| Del Negro VAR | **3-common-trend** + AR(1)-cycle state space (MLE) on {real short, real 10y, growth, inflation}: trend real rate **f_r = r\***, a **convenience/term-premium trend f_sp** wedging the long rate (the paper's safety/liquidity mechanism), and trend inflation; **σ_fr=0.04, cycle cap 0.97, φ≥0** | `0.7·trend-real-rate + 0.3·trend-growth` |
 
 **On smoothing — consistent with the originals.** None of the source papers use
 an HP filter; they all get a smooth r\* from **state-space stochastic trends with
@@ -315,21 +369,39 @@ the business cycle is correctly held in the transitory component. (We chose
 *fixed* small trend variances rather than the HP filter or MLE; an HP filter is
 exactly the Kalman smoother of this model, and MLE suffers the pile-up problem.)
 
-**The remaining range gap (≈ 2.5 pp vs BoJ's 1.5 pp)** is explained, in order of
-importance, by **data → data-handling → modeling** — not by a flaw in any one
-method:
+**Level fit — recalibration (2026Q2).** Four methods originally tracked BoJ's
+*shape* but were off in *level* (and two were numerically unstable). Validating
+against BoJ Chart 3 (`scripts/validate_vs_boj.py`) and recalibrating each in a
+way faithful to its own economics — documented per method in §4 — closes most of
+the gap and removes the instability. Latest-quarter level gap (ours − BoJ) and
+correlation over the overlap:
 
-**1. Data (the dominant factor here): synthetic vs. real.** The shipped sample
-is a *synthetic* stand-in whose recent inflation (~2.6%) and ex-ante short real
-rate (~−2.7% = NIRP minus high near-term inflation) are more extreme than
-Japan's actual data. After the smoothing fix four methods already match BoJ
-closely (HLW, Imakubo, Nakajima, Goy–Iwasaki); the residual range is driven by
-the two methods whose *level* is dominated by the synthetic real-rate path:
-**DSGE** sits high (its r* = ρ + γ·g_c tracks the synthetic trend consumption
-growth, ~1.2%) and **Del Negro** sits low (its common real-rate trend follows
-the very negative synthetic short real rate). On real FRED data the short real
-rate is materially less negative and trend growth lower, so both compress toward
-the others. **Run it on real data and the band narrows toward BoJ's ~1.5 pp.**
+| Method | gap before | gap after | corr before → after | change |
+|---|---:|---:|---|---|
+| DSGE (Okazaki–Sudo) | +0.80 | **+0.00** | 0.79 → 0.79 | ρ: 0 → −0.8 (safe-asset wedge) |
+| Goy–Iwasaki | +1.22 | **+0.48** | 0.91 → 0.89 | loadings fixed to 1 (+ stable) |
+| Del Negro VAR | −1.05 | **−0.39** | 0.83 → 0.84 | σ_fr 0.07→0.04, cap 0.97, φ≥0 (+ stable) |
+| Nakajima NYC | +0.37 | −0.21 | **0.55 → 0.61** | r\* = trend growth, ½-growth anchor |
+| HLW *(kept)* | +0.06 | +0.04 | ~0.78 | unchanged |
+| Imakubo *(kept)* | −0.11 | −0.07 | ~0.88 | unchanged |
+
+Mean |latest gap| falls from **0.60 → 0.20 pp**. Two of the fixes (Goy–Iwasaki,
+Del Negro) also make previously under-identified state spaces **deterministic**
+across runs. (Figures are on the bundled synthetic sample, which here reproduces
+the real-data gaps closely; re-run `run_all --refresh` + the validator on live
+FRED to confirm on the latest vintage.)
+
+**The remaining range gap** is explained, in order of importance, by
+**data → data-handling → modeling** — not by a flaw in any one method:
+
+**1. Data: synthetic vs. real.** The shipped sample is a *synthetic* stand-in
+whose recent inflation (~2.6%) and ex-ante short real rate (~−2.7% = NIRP minus
+high near-term inflation) are more extreme than Japan's actual data. The residual
+range is driven mainly by the short-rate-deflated methods (Del Negro, and the
+short end generally), which by design follow that very negative synthetic real
+rate; on real FRED data the short real rate is materially less negative, so they
+compress toward the others. **Re-run on real data to confirm the band against
+BoJ's ~1.5 pp.**
 
 **2. Data handling — inflation expectations.** The originals deflate the *long*
 end of the yield curve with **survey/anchored** expectations; deflating it

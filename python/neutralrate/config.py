@@ -206,8 +206,20 @@ class DSGEParams:
     the intertemporal elasticity of substitution, and rho is the (annualized)
     rate of time preference.  Defaults are mid-range values used in the BOJ
     DSGE literature; override to match your preferred calibration.
+
+    rho calibration (-0.8).  With rho=0 the pure Euler rate r* = gamma*g_c sits
+    ~0.8pp ABOVE BoJ's published Okazaki-Sudo estimate (Chart 3): the observed
+    safe real rate in Japan lies below the consumption-Euler rate by a sizeable
+    convenience/safety yield on government debt (the Del-Negro mechanism).  rho
+    here therefore absorbs that steady-state safe-asset wedge as well as pure
+    time preference; -0.8 anchors the latest r* into BoJ's recent +0.2/+0.4
+    range.  (A residual mid-1990s gap remains because BoJ's structural
+    productivity trend falls faster than this smooth per-capita consumption
+    trend; that is a trend-shape, not a level, difference - see the research
+    report.)
     """
-    rho: float = 0.0          # annual %, time-preference / steady-state premium
+    rho: float = -0.8         # annual %, time preference + safe-asset/convenience
+                              # wedge between the Euler rate and the safe real rate
     gamma: float = 1.0        # inverse EIS (1.0 = log utility)
     per_capita: bool = True   # divide consumption by working-age population
 

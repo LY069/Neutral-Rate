@@ -11,12 +11,26 @@ Tractable faithful form
 ------------------------
 A single common stochastic trend mu_t (random walk) underlies the short real
 rate, the long real rate (the Nelson-Siegel *level* factor) and trend output
-growth.  Loadings are estimated by ML; idiosyncratic deviations are measurement
-noise.  r* = mu_t.
+growth.  r* = mu_t.
 
-    real_short_t = mu_t                         + e1   (loading fixed to 1)
-    real_10y_t   = c_l + a_l * mu_t              + e2
-    trend_grow_t = c_g + a_g * mu_t              + e3
+    real_short_t = mu_t                         + e1
+    real_10y_t   = c_l + mu_t                    + e2
+    trend_grow_t = c_g + mu_t                    + e3
+
+Identification (loadings fixed to 1).  An earlier version estimated the loadings
+a_l, a_g freely.  That model is only weakly identified: with a near-constant
+common trend (small sigma_mu) and three free observation-noise variances, the
+likelihood has a flat ridge along which one noise variance collapses to zero and
+pins mu to a single series - so the estimate is unstable (it lands in different
+basins run-to-run under BLAS non-determinism, giving r* anywhere from -0.8 to
++0.3) and its LEVEL drifts ~1.2pp above BoJ.  The fix is the model's own
+economics: in a Nelson-Siegel curve the common LEVEL factor loads exactly 1 on
+every maturity, and r* tracks trend growth one-for-one (the LW logic), so
+a_l = a_g = 1 is the correct restriction, not a free parameter.  mu is then the
+genuine common level (its mean ~ the real short rate, intercepts c_l, c_g
+absorbing the average term premium and the growth-minus-rate wedge); this is
+both well-identified/deterministic and ~0.7pp closer to BoJ.  A small floor on
+the observation-noise std devs guarantees the ridge can never reappear.
 """
 from __future__ import annotations
 
@@ -49,35 +63,38 @@ def estimate(df: pd.DataFrame) -> GoyIwasakiResult:
     n = len(d)
 
     SIGMA_MU = 0.02                          # small common-trend innovation -> smooth
+    SIGMA_FLOOR = 0.05                        # min obs-noise std (kills the flat ridge)
+    A_LONG = 1.0     # Nelson-Siegel level factor loads 1 on every maturity
+    A_GROWTH = 1.0   # r* tracks trend growth one-for-one (LW logic)
     a1 = np.array([float(np.nanmean(Y[:8, 0]))])
     P1 = np.array([[4.0]])
 
     def build(theta):
-        c_l, a_l, c_g, a_g = theta[:4]
-        s1, s2, s3 = np.exp(theta[4:7])
+        c_l, c_g = theta[:2]
+        s = np.sqrt(np.exp(theta[2:5]) ** 2 + SIGMA_FLOOR ** 2)
         T = np.array([[1.0]])
         Q = np.array([[SIGMA_MU ** 2]])
-        Z = np.array([[1.0], [a_l], [a_g]])
+        Z = np.array([[1.0], [A_LONG], [A_GROWTH]])
         d_vec = np.array([0.0, c_l, c_g])
-        H = np.diag([s1 ** 2, s2 ** 2, s3 ** 2])
+        H = np.diag(s ** 2)
         return SSM(T=T, Z=Z, Q=Q, H=H, d=d_vec, a1=a1.copy(), P1=P1.copy())
 
     def neg_ll(theta):
         ll = loglik(Y, build(theta))
         return -ll if np.isfinite(ll) else 1e6
 
-    x0 = np.array([2.0, 1.0, 0.0, 1.0,
-                   np.log(0.5), np.log(0.8), np.log(0.8)])
+    x0 = np.array([1.5, 0.0, np.log(0.5), np.log(0.8), np.log(0.8)])
     res = minimize(neg_ll, x0, method="Nelder-Mead",
-                   options={"maxiter": 1500, "fatol": 1e-4, "xatol": 1e-4})
+                   options={"maxiter": 1500, "fatol": 1e-5, "xatol": 1e-5})
     sm = filter_smooth(Y, build(res.x))["smoothed"]
     mu = sm[:, 0]
 
-    c_l, a_l, c_g, a_g = res.x[:4]
-    params = {"c_long": c_l, "a_long": a_l, "c_growth": c_g, "a_growth": a_g,
+    c_l, c_g = res.x[:2]
+    s_final = np.sqrt(np.exp(res.x[2:5]) ** 2 + SIGMA_FLOOR ** 2)
+    params = {"c_long": c_l, "a_long": A_LONG, "c_growth": c_g, "a_growth": A_GROWTH,
               "sigma_mu": SIGMA_MU,
-              "sigma_short": np.exp(res.x[4]), "sigma_long": np.exp(res.x[5]),
-              "sigma_growth": np.exp(res.x[6])}
+              "sigma_short": float(s_final[0]), "sigma_long": float(s_final[1]),
+              "sigma_growth": float(s_final[2])}
     return GoyIwasakiResult(
         r_star=pd.Series(mu, index=d.index, name="Goy-Iwasaki"),
         params=params,

@@ -65,9 +65,17 @@ def estimate(df: pd.DataFrame) -> DelNegroResult:
                    0.0, 0.0, 0.0, 0.0])
     P1 = np.diag([4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0])
 
-    SIGMA_FR = 0.07    # trend real rate innovation (smooth but not flat)
+    # Trend-innovation sizes (the smoothness / signal-to-noise priors).  SIGMA_FR
+    # was 0.07, which let f_r over-rotate: it tracked the persistent 2022-24
+    # real-rate plunge (policy at zero while inflation spiked) straight into the
+    # TREND, so r* dropped to ~-1.5 (1.0pp BELOW BoJ) even though it sat ~0.4pp
+    # ABOVE BoJ on average earlier.  Tightening f_r to 0.04 keeps the trend slow
+    # (Del Negro's tight-prior smoothness) so transitory swings are absorbed by
+    # the cycle, not the trend - halving the latest gap and lowering the mean gap.
+    SIGMA_FR = 0.04    # trend real rate innovation (smoother -> no end-sample drift)
     SIGMA_FSP = 0.05   # convenience/term-premium trend innovation
     SIGMA_FPI = 0.10   # trend inflation innovation
+    CYC_CAP = 0.97     # max cycle persistence (was 0.90); see neg_ll
 
     def build(theta):
         phi, c_g = theta[:2]
@@ -87,16 +95,24 @@ def estimate(df: pd.DataFrame) -> DelNegroResult:
         return SSM(T=T, Z=Z, Q=Q, H=H, d=d_vec, a1=a1.copy(), P1=P1.copy())
 
     def neg_ll(theta):
-        # cycles must be CYCLES: |rho| <= 0.9 keeps transitory components from
-        # impersonating the trend (which would let f_r drift off the data).
-        pen = sum(1e4 * (abs(r) - 0.9) for r in theta[2:6] if abs(r) > 0.9)
+        # cycles must be CYCLES, but PERSISTENT ones: with the cap at 0.90 the
+        # cycle could not absorb the multi-year (near-unit-root) real-rate swings,
+        # which then leaked into the trend f_r.  Allowing rho up to CYC_CAP=0.97
+        # lets the cycle soak up those persistent-but-transitory movements while
+        # still ruling out a literal unit root that would steal the trend.
+        pen = sum(1e4 * (abs(r) - CYC_CAP) for r in theta[2:6] if abs(r) > CYC_CAP)
+        # growth must share the real trend with the RIGHT sign (DGGT): penalize
+        # phi < 0, which is economically perverse (r* up <-> growth down) and an
+        # artefact of the weak phi identification.
+        if theta[0] < 0:
+            pen += 1e4 * (-theta[0])
         ll = loglik(Y, build(theta))
         return (-ll + pen) if np.isfinite(ll) else 1e6
 
     x0 = np.array([1.0, 0.0, 0.6, 0.6, 0.6, 0.6,
                    np.log(0.5), np.log(0.5), np.log(0.5), np.log(0.5)])
     res = minimize(neg_ll, x0, method="Nelder-Mead",
-                   options={"maxiter": 2500, "fatol": 1e-4, "xatol": 1e-4})
+                   options={"maxiter": 3000, "fatol": 1e-5, "xatol": 1e-5})
     sm = filter_smooth(Y, build(res.x))["smoothed"]
     f_r, f_sp = sm[:, 0], sm[:, 1]
     phi = res.x[0]

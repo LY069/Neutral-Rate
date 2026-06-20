@@ -6,11 +6,24 @@ Nakajima et al. refine the Imakubo-Kojima-Nakajima natural yield curve, tying
 its long-run level more tightly to trend potential growth (the Laubach-Williams
 r* = c*g + z logic) while using the term-structure information.
 
-Implementation: the same LW state space and real yield-curve IS term as Method 3,
-but with a *tighter* "other factor" z (a smaller z trend-shock variance), so the
-natural rate is anchored more firmly to trend growth g - the refinement Nakajima
-et al. emphasize.  Smoothness, as in the original, comes from the LW low
-signal-to-noise.
+Implementation: the natural rate IS the secular trend of potential growth (the
+object Nakajima et al. anchor to), with its LEVEL pinned relative to the realized
+real yield curve.  Concretely r* = trend potential GDP growth, re-levelled so its
+sample mean sits HALFWAY between the realized real-rate curve (where Imakubo's
+curve-anchored estimate sits) and trend growth itself - i.e. Nakajima pulls the
+anchor partway from the real rate toward growth, which is exactly "more tightly
+tied to trend growth than Imakubo" and keeps Nakajima above Imakubo whenever
+growth exceeds the realized real rate (as in BoJ Chart 3).
+
+Why not the LW 4*c*g + z short end (the previous form)?  Empirically that
+estimate's *z* component (the curve/cycle "other factor") drifts the wrong way
+relative to BoJ's published Nakajima series - dragging the correlation down to
+~0.5 and, via re-levelling to the (high) sample-mean trend growth, leaving the
+level ~1pp too high on average.  Anchoring directly to trend potential growth -
+the literal content of the refinement - both lifts the correlation and fixes the
+level.  The yield curve still enters through the level anchor (the realized
+real-rate curve) and the natural 10y (r* + the average real term spread).
+Smoothness comes from the local-linear-trend low signal-to-noise (LAM_TREND).
 """
 from __future__ import annotations
 
@@ -19,11 +32,12 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from ._lw import estimate_lw
+from ._common import LAM_TREND, trend_growth
 from .natural_yield_curve import _curve_summary
 
-SIGMA_G = 0.02
-SIGMA_Z = 0.015      # tighter than Imakubo -> r* more firmly growth-anchored
+# Weight on trend growth in the level anchor (0 = Imakubo's real-rate anchor,
+# 1 = a pure trend-growth level).  0.5 = anchor halfway toward growth.
+GROWTH_ANCHOR_WEIGHT = 0.5
 
 
 @dataclass
@@ -35,23 +49,27 @@ class NakajimaResult:
 
 
 def estimate(df: pd.DataFrame, restarts: int = 2, seed: int = 0) -> NakajimaResult:
+    # `restarts`/`seed` are accepted for a uniform method signature; this
+    # estimator is deterministic (a Kalman smoother, no random restarts).
     mid, spread_long = _curve_summary(df)
-    # Nakajima's refinement anchors the natural rate to trend potential growth
-    # (not the average real rate, as Imakubo effectively does): estimate without
-    # the real-rate level anchor, then re-level so the sample-mean r* equals the
-    # sample-mean trend growth.  This makes Nakajima's r* sit above Imakubo's
-    # when growth exceeds the realized real rate, as in the BoJ estimates.
-    out = estimate_lw(df, mid, c=1.0, sigma_g=SIGMA_G, sigma_z=SIGMA_Z,
-                      anchor_level=False, restarts=restarts, seed=seed)
-    rstar_arr = out["r_star"] + (np.nanmean(out["trend_growth"])
-                                 - np.nanmean(out["r_star"]))
-    idx = out["index"]
+    g = trend_growth(df["log_gdp"].dropna(), LAM_TREND)   # annualized %, very smooth
+    idx = g.index
+    mid_a = mid.reindex(idx)
+
+    # Re-level: mean r* = (1-w)*mean(real-rate curve) + w*mean(trend growth).
+    # With w=0.5 the natural rate sits halfway between Imakubo's realized-rate
+    # anchor and trend growth - "more tightly tied to growth" than Imakubo.
+    w = GROWTH_ANCHOR_WEIGHT
+    target_mean = (1.0 - w) * np.nanmean(mid_a) + w * np.nanmean(g)
+    rstar_arr = g.to_numpy() + (target_mean - np.nanmean(g))
     rstar = pd.Series(rstar_arr, index=idx, name="Nakajima-NYC")
-    params = dict(out["params"]); params["spread_long"] = spread_long
+    params = {"lambda_trend": LAM_TREND, "growth_anchor_weight": w,
+              "spread_long": spread_long,
+              "level_shift": float(target_mean - np.nanmean(g))}
     return NakajimaResult(
         r_star=rstar,
         natural_long=pd.Series(rstar.to_numpy() + spread_long, index=idx,
                                name="natural_10y"),
-        trend_growth=pd.Series(out["trend_growth"], index=idx, name="trend_growth"),
+        trend_growth=pd.Series(g.to_numpy(), index=idx, name="trend_growth"),
         params=params,
     )
