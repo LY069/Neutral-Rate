@@ -1,0 +1,335 @@
+# Update Manual — Refreshing the Japan r\* Models
+
+This manual explains, step by step, how to **update the data and re-run all six
+natural-rate models** in both the **Python** toolkit and the **Excel** workbook
+when new economic data are released (typically once a quarter).
+
+Everything is driven by **public FRED data**. You only ever change one thing —
+the data — and the models recompute.
+
+---
+
+## 0. One-time setup
+
+### 0.1 Get a (free) FRED API key — recommended
+1. Create an account at <https://fredaccount.stlouisfed.org/login/secure/> and
+   request an API key (instant).
+2. Make it available to the toolkit as an environment variable. **Do not paste it
+   into code or commit it to git.**
+
+   macOS / Linux:
+   ```bash
+   export FRED_API_KEY="your_key_here"
+   # add the line to ~/.bashrc or ~/.zshrc to persist it
+   ```
+   Windows (PowerShell):
+   ```powershell
+   setx FRED_API_KEY "your_key_here"
+   ```
+   Or create a local, git-ignored `.env` and `source` it.
+
+> Without a key the toolkit still works: it falls back to FRED's no-key
+> `fredgraph.csv` download. The key is just more robust and supports larger pulls.
+
+### 0.2 Get a (free) e-Stat application ID — recommended for best CPI data
+
+The Statistics Bureau of Japan (SBJ) is the **authoritative CPI source**. The FRED OECD mirrors
+were discontinued at June 2021 and silently freeze any inflation-dependent estimate. The SBJ
+publishes monthly updates within ~6 weeks of the reference month.
+
+**One-time registration (5 minutes):**
+
+1. Visit <https://www.e-stat.go.jp/api/en/> → **"User Registration"**
+2. Complete the free registration form (email, institution, intended use: "academic research")
+3. Confirm via the email link → receive your **Application ID** (16-character string)
+4. Export it as an environment variable — **never paste it into code or commit it**:
+
+   macOS / Linux:
+   ```bash
+   export ESTAT_APP_ID="your_application_id"
+   # Add the line to ~/.bashrc or ~/.zshrc to persist it
+   ```
+   Windows (PowerShell):
+   ```powershell
+   setx ESTAT_APP_ID "your_application_id"
+   ```
+
+**Discover and wire the right CPI series (one-time, ~10 minutes):**
+
+```bash
+cd python
+
+# Step 1 — find the 2020-base monthly CPI table id
+python scripts/estat_setup.py --search "consumer price index"
+# Look for the "2020-base, Japan, Monthly" table; note its id (e.g. 0003427113)
+
+# Step 2 — inspect its item codes
+python scripts/estat_setup.py --meta 0003427113
+# The script auto-detects and prints suggested config.py lines, e.g.:
+#   "estat:0003427113:0020001",  # All items
+#   "estat:0003427113:0020007",  # Less fresh food and energy
+
+# Step 3 — verify both specs fetch recent data
+python scripts/estat_setup.py --check "estat:0003427113:0020001"
+python scripts/estat_setup.py --check "estat:0003427113:0020007"
+# Should show "CURRENT (last obs 0-3m ago)"
+
+# Step 4 — paste the suggested lines into config.py
+#   CPI_INDEX_CANDIDATES:  add  "estat:0003427113:0020001"  as the FIRST entry
+#   CORE_CPI_CANDIDATES:   add  "estat:0003427113:0020007"  as the FIRST entry
+#   (Exact codes depend on the table; use --meta output)
+```
+
+> **Which CPI concept?** The natural-rate methods (HLW, LW extensions) deflate with **core-core
+> = CPI less fresh food and energy** — NOT headline. The DSGE is consumption-driven and insensitive
+> to CPI choice. Do not use the FRED `CPGRLE01JP*` series (discontinued 2021).
+
+> **Tax effects.** Japan's consumption-tax hikes (1989 3%, 1997 5%, 2014 8%, 2019 10%) cause
+> one-time permanent jumps in the CPI index level — mechanically boosting YoY inflation for four
+> quarters. Choose ONE of:
+>
+> | Route | Source | `ADJUST_CONSUMPTION_TAX` |
+> |---|---|---|
+> | **BoJ "Indicators for Core CPI"** — already tax-excluded | BoJ stat-search, short history (~2015+) | set `False` |
+> | **SBJ raw index + reconstruction script** — longer history | e-Stat API or CSV export | set `True` (default) |
+>
+> To reconstruct the BoJ-equivalent tax-excluded series from the longer SBJ raw index:
+> ```bash
+> # One-time: produces data/cpi/jp_core_core_yoy.csv (tax-excluded YoY, longer history)
+> python scripts/build_core_core.py --raw "estat:0003427113:0020007"
+> # Then in config.py: ADJUST_CONSUMPTION_TAX = False
+> # (the file is already in CORE_CPI_CANDIDATES[0]; it is picked automatically)
+> ```
+
+### 0.3 Install the Python dependencies
+```bash
+cd python
+python -m pip install -r requirements.txt
+```
+
+### 0.3 First build (no network needed)
+The repo ships a **synthetic sample** so you can see everything work offline:
+```bash
+cd python
+python scripts/make_sample_data.py          # (already committed; regenerates sample)
+python -m neutralrate.run_all --offline      # runs all six on the sample
+python ../excel/build_workbook.py            # builds the Excel workbook
+```
+
+---
+
+## 1. The quarterly update — Python (the faithful estimates)
+
+This is the recommended path; it produces the faithful state-space/MLE estimates.
+
+```bash
+cd python
+
+# 1. Pull the latest data from FRED (writes data/cache/raw_panel.csv)
+python scripts/refresh_data.py            # add --check first to preview values
+
+# 2. Re-estimate all six methods on the fresh data
+python -m neutralrate.run_all --refresh
+```
+
+Outputs land in `python/output/`:
+- `r_star_estimates.csv` — quarterly r\* by method + cross-method mean/min/max
+- `method_params.json` — the estimated parameters of every model
+- `r_star_chart.png` — the comparison chart
+
+```bash
+# 3. Validate against BoJ's published Chart 3 estimates (one command)
+python scripts/validate_vs_boj.py
+```
+
+### Watch for discontinued FRED series (important)
+`refresh_data.py --check` now prints the **last valid date of every series** and
+flags any stuck in the past (`<-- STALE`). This matters because FRED's OECD
+"Main Economic Indicators" Japan CPI family (`JPNCPIALLMINMEI`, `CPALTT01JP*657N`,
+`CPGRLE01JP*657N`) was **discontinued at June 2021** — using it silently freezes
+every inflation-dependent method at 2021. The toolkit defends against this: CPI
+is fetched from a **prioritised candidate list** (`CPI_INDEX_CANDIDATES`,
+`CORE_CPI_CANDIDATES` in `config.py`) and the **freshest live** series is used;
+if the core series is stale it falls back to all-items automatically, and a
+`WARNING` prints if even the best CPI ends well before the rate data. If `--check`
+shows the chosen `cpi`/`core_cpi_yoy` are stale, re-point those lists to a
+maintained series and re-run.
+
+### Japan-specific data handling (on by default)
+- **Consumption-tax adjustment**: the 1989/1997/2014/2019 hikes mechanically
+  lift YoY CPI for four quarters (~+1.2/+1.5/+2.0/+0.5pp). The toolkit strips
+  these (BoJ-style tax-adjusted inflation) before building expectations and
+  real rates. Toggle/edit windows in `config.py`
+  (`ADJUST_CONSUMPTION_TAX`, `CONSUMPTION_TAX_EFFECTS`).
+- **Real consumption**: the DSGE uses constant-price consumption
+  (`NAEXKP02JPQ659S`); a nominal series here would bias its r\* upward.
+
+**That's it.** Adding the new quarter is fully automatic — the data layer
+re-downloads, re-aligns to quarterly, rebuilds all derived features (real rates,
+inflation, gaps), and the six estimators re-run.
+
+### Tips
+- `python scripts/refresh_data.py --check` prints the latest fetched observations
+  so you can sanity-check before re-estimating.
+- To change a source series (e.g. a different inflation measure), edit
+  `FRED_SERIES` in `python/neutralrate/config.py` — nothing else changes.
+- To recalibrate the DSGE Euler equation, edit `DSGEParams` (`rho`, `gamma`) in
+  the same file.
+
+---
+
+## 2. The quarterly update — Excel
+
+The workbook recomputes the **Excel proxy** of each method live from its `Data`
+sheet. Pick **one** refresh path.
+
+### Option A — Automated (easiest, uses the Python data layer)
+```bash
+cd python
+python scripts/refresh_data.py --excel
+```
+This pulls fresh FRED data and writes it straight into the workbook's `Data`
+sheet. Open `excel/Japan_Neutral_Rate_Models.xlsx` and every r\* column and the
+Dashboard chart will already reflect the new quarter (recalculate with **F9** if
+needed).
+
+To also refresh the faithful Python estimates that are overlaid on the Dashboard:
+```bash
+python -m neutralrate.run_all --refresh
+python ../excel/build_workbook.py --from-cache
+```
+
+### Option B — Native Excel "Refresh All" via Power Query
+Set this up once and thereafter just press **Data ▸ Refresh All**.
+
+1. Open `Japan_Neutral_Rate_Models.xlsx`.
+2. **Data ▸ Get Data ▸ From Other Sources ▸ From Web.**
+3. Paste a FRED CSV URL, e.g. the 10-year JGB yield:
+   ```
+   https://fred.stlouisfed.org/graph/fredgraph.csv?id=IRLTLT01JPM156N
+   ```
+   (Swap `id=` for any series in the table below.)
+4. In the Power Query editor: set the first row as headers, type the date and
+   value columns, then **Close & Load To… ▸ a connection / a staging sheet.**
+5. Repeat for each series, then combine them into the `Data` sheet layout
+   (one date column + one column per series) — or load each to its own sheet and
+   reference it. The derived-feature and r\* formulas already point at the `Data`
+   columns by header, so once `Data` is refreshed everything recomputes.
+6. From then on: **Data ▸ Refresh All** each quarter.
+
+**FRED series ids for the Power Query URLs:**
+
+| Column on `Data` | FRED id |
+|---|---|
+| `real_gdp` | `JPNRGDPEXP` |
+| `consumption` (constant prices — do **not** swap in nominal `JPNPFCEQDSMEI`) | `NAEXKP02JPQ659S` |
+| `cpi` (all-items index) — prefer SBJ via `data/cpi/jp_cpi_allitems_index.csv` | FRED fallback: `JPNCPALTT01IXNBM` |
+| `core_cpi_yoy` (core-core, YoY %) — prefer `data/cpi/jp_core_core_yoy.csv` from SBJ | FRED fallback: `CPGRLE01JPM659N` (discontinued 2021) |
+| `short_rate` | `IRSTCI01JPM156N` |
+| `rate_3m` | `IR3TIB01JPM156N` |
+| `rate_10y` | `IRLTLT01JPM156N` |
+| `working_age_pop` | `LFWA64TTJPM647S` |
+
+### Inflation expectations — using real survey data (recommended)
+
+The methods treat expected inflation in three ways, matching the originals:
+HLW uses a 4-quarter MA of core inflation (adaptive); the DSGE uses rational
+expectations (no series); the four term-structure / common-trends methods
+(Imakubo, Nakajima, Goy-Iwasaki, Del Negro) deflate the yield curve with
+**survey-based** expectations. FRED has no clean Japan expectations series, so
+the best **real** sources are from the Bank of Japan and aggregators:
+
+| Source | What | Horizon | History | Access |
+|---|---|---|---|---|
+| **BoJ Tankan – "Inflation Outlook of Enterprises"** | firms' expected CPI | 1y / 3y / 5y | 2014– | BoJ Time-Series Data Search (`stat-search.boj.or.jp`) → CSV |
+| **BoJ Opinion Survey (General Public)** | households' expected prices | 1y / 5y | 2006– | BoJ stat-search → CSV |
+| **BoJ composite indicator** | firms+households+experts (QUICK, Consensus, inflation swaps) | multi | 2014– | BoJ research data |
+| **DBnomics** | mirrors BoJ Tankan + OECD | various | varies | free API `api.db.nomics.world` |
+| **JCER ESP Forecast / Consensus** | professional forecasters | 1y…10y | long | subscription |
+
+Two config hooks (`python/neutralrate/config.py`) — a short (~1y) and a long
+(~5–10y) horizon — each accept **any** of:
+
+```python
+INFLATION_EXPECTATIONS_SERIES      = "T10YIE"                       # a FRED id
+INFLATION_EXPECTATIONS_LONG_SERIES = "BOJ/CO/CO'MAA01...'"          # a DBnomics code
+# or a local CSV you downloaded from BoJ (date,value columns):
+INFLATION_EXPECTATIONS_LONG_SERIES = "data/boj_tankan_5y.csv"
+```
+
+Because BoJ surveys are short, a configured series is **spliced** onto the
+proxy automatically: the survey value is used where available and the
+core-inflation MA fills the earlier history (so a 2014-on Tankan series still
+works for a 1990s-on estimation sample). If both hooks are `None`, the toolkit
+uses the proxy only (4q MA for the short horizon, multi-year MA for the long).
+
+> **How to wire BoJ Tankan in 3 steps:** (1) download the "Inflation Outlook of
+> Enterprises" series from BoJ Time-Series Data Search as CSV; (2) keep two
+> columns `date,value` (the 1y and 5y averages); (3) point the two hooks at the
+> files and re-run `refresh_data.py` + `run_all`.
+
+> Monthly series (`cpi`, the three interest rates, `working_age_pop`) must be
+> aggregated to **quarterly averages** to match the GDP frequency. The automated
+> Option A does this for you; in Power Query use **Group By ▸ quarter ▸ Average**.
+
+### Settings you can change in the workbook
+On the **Settings** sheet:
+- `B1` **window (quarters)** — trailing window for all trend/moving-average
+  calculations (default 20 ≈ 5 years). All r\* columns recompute when you change it.
+- `B2` **rho**, `B3` **gamma** — DSGE Euler calibration.
+- `B4` **avg real term spread** — auto-computed from the data; used to level-adjust
+  the long rate.
+
+---
+
+## 3. What "updating" actually recomputes
+
+```
+FRED  ──►  raw quarterly panel  ──►  derived features  ──►  six r* estimates
+          (real_gdp, cpi, rates,    (log GDP, growth,      (Python: state-space MLE
+           consumption, pop…)        inflation, real         Excel: live formulas)
+                                      rates, exp. infl.)
+```
+
+- **Python**: `data.refresh()` re-pulls and re-derives; `run_all` re-estimates.
+- **Excel**: the `Data` sheet is the single source; all helper columns and the six
+  `rstar_*` columns are formulas over it, so a `Data` refresh propagates everywhere.
+
+---
+
+## 4. Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `RuntimeError: FRED API fetch failed` | Check internet; verify `FRED_API_KEY`; the code retries 4× with backoff, then errors. Re-run, or omit the key to use the no-key `fredgraph` path. |
+| `RuntimeError: ESTAT_APP_ID env var not set` | Run `export ESTAT_APP_ID="your_id"` (see §0.2). e-Stat specs in the candidate lists are skipped gracefully; the toolkit falls back to FRED. |
+| `RuntimeError: e-Stat response … parsed implausibly` | The `statsDataId` or `cdCat01` code is wrong. Re-run `python scripts/estat_setup.py --meta <id>` to verify codes; use `--check "estat:…"` to confirm. |
+| `cpi` / `core_cpi_yoy` columns are `NaN` | `refresh_data.py --check` prints each series' last date. If the CSV templates in `data/cpi/` are empty AND the e-Stat spec isn't set, it falls back to the FRED OECD series (frozen 2021). Fill the CSVs or set the e-Stat ids in `config.py`. |
+| `Host not in allowlist` / connection refused | You are on a network that blocks FRED (e.g. a locked-down CI sandbox). Run on a normal network, or use `--offline` for a demo run. |
+| A method prints `[FAIL]` in `run_all` | The optimizer didn't converge on this vintage. Re-run (random restarts use a fixed seed but try `--refresh`), or widen the sample in `config.py`. Other methods still produce output. |
+| Excel shows `#N/A` early in the sample | Expected: trailing windows need `window` quarters of history before they fill in. |
+| Excel r\* columns don't update | Press **F9** (or **Formulas ▸ Calculate Now**); ensure calculation is set to Automatic. |
+| Estimates look implausible | Check the `Data` sheet for a bad/late FRED revision; use `refresh_data.py --check` to inspect the latest observations. |
+
+---
+
+## 5. Quarterly checklist (TL;DR)
+
+```bash
+cd python
+
+# [Optional] Rebuild tax-excluded core-core CSV from SBJ raw index — only needed
+# when the SBJ table is updated to a new base year or you switch statsDataId:
+# python scripts/build_core_core.py --raw "estat:0003427113:0020007"
+
+# Python (faithful estimates)
+python scripts/refresh_data.py --check     # eyeball the new data + staleness flags
+python -m neutralrate.run_all --refresh    # re-estimate -> output/
+
+# Excel (proxy + overlay)
+python scripts/refresh_data.py --excel     # push data into the workbook
+python ../excel/build_workbook.py --from-cache   # refresh overlaid Python series
+```
+Open `python/output/r_star_chart.png` and `excel/Japan_Neutral_Rate_Models.xlsx`,
+read off the new r\* band, and remember BOJ's lesson: **watch the range, not a
+single number.**

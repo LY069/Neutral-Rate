@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neutralrate"
+version = "1.1.0"
+description = "Replication of the six BoJ-surveyed estimation methods for Japan's natural rate of interest (r*)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "requests>=2.28",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.7"]
+
+[tool.setuptools.packages.find]
+include = ["neutralrate*"]
