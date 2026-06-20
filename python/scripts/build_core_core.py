@@ -60,7 +60,7 @@ def main():
     ap.add_argument("--raw", required=True,
                     help="raw core-core INDEX source (CSV path / estat:... / FRED id)")
     ap.add_argument("--boj", default=None,
-                    help="BoJ official tax-excluded core-core (YoY % or index) to evaluate against")
+                    help="BoJ official tax-excluded core-core (YoY %% or index) to evaluate against")
     ap.add_argument("--out", default=OUT_DEFAULT)
     args = ap.parse_args()
 
