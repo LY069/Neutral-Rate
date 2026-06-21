@@ -323,6 +323,18 @@ model, or a BVAR with common trends and a convenience-yield block) cannot live i
 a spreadsheet and would be thousands of lines to reproduce verbatim. This toolkit
 therefore offers **two tiers**, and is explicit about which is which:
 
+> **Faithfulness caveat (important).** "Python (faithful)" below means *faithful in
+> spirit* — the economic content that pins down r\* — not a line-for-line
+> replication of each paper's full estimator. Only **HLW** is structurally
+> complete. The other five are **reduced forms** that, in four cases, omit the
+> paper's central mechanism (the DSGE's neutral-technology / financial-wedge
+> channels; the Nelson–Siegel *full-curve* structure behind every
+> natural-yield-curve method; the convenience-yield identification in Del Negro).
+> The residual gaps vs. BoJ Chart 3 are therefore **structural**, not calibration.
+> See **`docs/03_faithfulness_audit.md`** for the model-by-model audit, the root
+> causes, and exactly what (data + estimation machinery) full replication would
+> require — and why it is currently blocked.
+
 | Method | **Python (faithful)** | **Excel (transparent proxy)** |
 |---|---|---|
 | HLW | 9-state IS+Phillips Kalman filter (MLE) with the **original two-lag real-rate-gap IS term** −(a_r/2)(r̃₋₁+r̃₋₂); LW low signal-to-noise (small fixed trend-shock variances); **long-run-neutrality level anchor** | `0.5·trend-growth + 0.5·trend-real-rate` |

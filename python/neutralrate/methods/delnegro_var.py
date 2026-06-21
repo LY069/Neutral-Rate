@@ -26,6 +26,17 @@ Trend innovations are fixed small (low signal-to-noise, the smoothness
 mechanism of the original's priors); cycle persistence/variances are MLE.
 The original is Bayesian with an explicit convenience-yield block on corporate
 spreads; that simplification is documented in the research report.
+
+FAITHFULNESS (see docs/03_faithfulness_audit.md).  This is a reduced form, and a
+double one: (i) BoJ's Chart-3 "Del Negro" column for Japan is actually
+Hatayama-Iwasaki (2024, WP 24-E-17) = a *Nelson-Siegel decomposition of the full
+nominal+real JGB curve* fused with a common-trends VAR - a curve model we do not
+build (we have only the 3m and 10y).  (ii) Against the US paper we lack the
+corporate-minus-Treasury spread that *identifies* the convenience yield (its
+central mechanism), so f_sp here is just the 10y-minus-short term spread and
+conflates the term premium with the convenience yield.  The trend-variance / cycle
+settings below control smoothness/identification only; they do not add the missing
+structure.
 """
 from __future__ import annotations
 

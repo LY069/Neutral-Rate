@@ -13,6 +13,17 @@ expectations - instead of the policy rate.  This is faithful to "an extension of
 LW for the conventional natural rate" and produces the natural rate of interest
 (short end) plus the natural 10y rate.  Smoothness comes from the LW low
 signal-to-noise (small trend-shock variances), as in the original.
+
+FAITHFULNESS (see docs/03_faithfulness_audit.md).  The original decomposes the
+*whole* real JGB curve into Nelson-Siegel level/slope/curvature factors via a
+shadow-rate term-structure model (to respect the ZLB), and the IS curve responds
+to the *yield-curve gap* across maturities.  This toolkit fetches only two
+maturities (3m, 10y) and collapses them to a midpoint, so there is no curve
+decomposition, no shadow-rate handling, and no natural *curve* - only a scalar
+proxy of the short end.  The same two-maturity limitation caps every method in
+the natural-yield-curve family (Nakajima, Goy-Iwasaki, Hatayama-Iwasaki/"Del
+Negro").  Closing it needs the full JGB curve (>=4 maturities), a data gap, not a
+calibration one.
 """
 from __future__ import annotations
 
