@@ -54,9 +54,16 @@ def estimate(df: pd.DataFrame) -> GoyIwasakiResult:
     _, tg = output_gap(df["log_gdp"])
     d = df.copy()
     d["trend_growth"] = tg.reindex(d.index)
-    # Survey-based real yields (macro-finance models use survey expectations).
+    # Real short/long yields.  The short rate is the policy/short real rate; the
+    # long rate is taken from the fitted Nelson-Siegel curve (whole-curve,
+    # denoised) when the full JGB curve is available, else the raw real 10y.
+    # (A full affine no-arbitrage curve - the original's structure - is the
+    # remaining fidelity step; see docs/03_faithfulness_audit.md.)
     d["_rs"] = d["real_short_exp"] if "real_short_exp" in d else d["real_short_rate"]
-    d["_rl"] = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
+    if "ns_real_10y" in d and d["ns_real_10y"].notna().any():
+        d["_rl"] = d["ns_real_10y"]
+    else:
+        d["_rl"] = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
     cols = ["_rs", "_rl", "trend_growth"]
     d = d.dropna(subset=cols)
     Y = d[cols].to_numpy()

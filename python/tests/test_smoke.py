@@ -46,6 +46,27 @@ def test_nyc_ordering():
     assert nak >= ima, f"ordering broken: Nakajima {nak:.2f} < Imakubo {ima:.2f}"
 
 
+def test_nelson_siegel_recovers_factors():
+    """The NS curve engine must recover known level/slope/curvature factors."""
+    import pandas as pd
+    from neutralrate.methods import _nelson_siegel as ns
+    mats = [1, 2, 3, 5, 7, 10, 20, 30]
+    beta = np.array([1.0, -1.2, 0.4])
+    y = ns.loadings(mats, 0.7) @ beta
+    curve = pd.DataFrame([y], columns=mats, index=pd.to_datetime(["2020-01-01"]))
+    got = ns.fit_factors(curve, 0.7).iloc[0].to_numpy()
+    assert np.allclose(got, beta, atol=1e-6), f"NS factors not recovered: {got}"
+
+
+def test_full_curve_path_active():
+    """The bundled sample carries a JGB curve, so build_features must decompose
+    it into Nelson-Siegel factors that the term-structure methods consume."""
+    for col in ["ns_level", "ns_slope", "ns_curvature", "ns_real_short",
+                "ns_real_10y"]:
+        assert col in PANEL.columns, f"{col} missing - curve path inactive"
+        assert PANEL[col].notna().any(), f"{col} all-NaN"
+
+
 def test_tax_adjustment():
     """Consumption-tax de-tax: level-based pure path and flag-gated YoY-window path."""
     import pandas as pd
@@ -80,5 +101,7 @@ if __name__ == "__main__":
     test_each_method_runs()
     test_smoothness()
     test_nyc_ordering()
+    test_nelson_siegel_recovers_factors()
+    test_full_curve_path_active()
     test_tax_adjustment()
     print("All smoke tests passed.")

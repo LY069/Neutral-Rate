@@ -46,8 +46,19 @@ class NYCResult:
 
 
 def _curve_summary(df: pd.DataFrame):
-    """Real yield-curve midpoint, long end deflated by anchored expectations and
-    reduced to a short-equivalent by removing the average real term spread."""
+    """Short-equivalent real-rate summary + average real term spread.
+
+    When the full real JGB curve has been decomposed (Nelson-Siegel factors
+    present, see data.build_features), the summary is the FITTED real short end
+    of the curve (`ns_real_short`) - a whole-curve, denoised short rate - and the
+    spread is the mean fitted 10y-minus-short real spread.  This is the faithful
+    natural-yield-curve input.  With only the 3m/10y pair available the legacy
+    midpoint (a 2-point short-equivalent) is used instead."""
+    if "ns_real_short" in df and df["ns_real_short"].notna().any():
+        short = df["ns_real_short"]
+        long_ = df["ns_real_10y"]
+        spread_long = float((long_ - short).mean())
+        return short, spread_long
     rs = df["real_short_exp"] if "real_short_exp" in df else df["real_short_rate"]
     rl = df["real_10y_exp"] if "real_10y_exp" in df else df["real_10y"]
     spread_long = float((rl - rs).mean())

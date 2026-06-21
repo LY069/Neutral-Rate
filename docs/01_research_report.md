@@ -334,6 +334,14 @@ therefore offers **two tiers**, and is explicit about which is which:
 > See **`docs/03_faithfulness_audit.md`** for the model-by-model audit, the root
 > causes, and exactly what (data + estimation machinery) full replication would
 > require — and why it is currently blocked.
+>
+> *Curve scaffolding (in progress).* The biggest of those gaps — the
+> term-structure methods not being curve-based — now has its plumbing in place: a
+> MoF full-JGB-curve fetcher and a Nelson–Siegel decomposition
+> (`methods/_nelson_siegel.py`) feed methods 3–6 when a full curve is supplied
+> (3m/10y midpoint remains the fallback). It runs on a synthetic full curve in
+> the bundled sample today; the live MoF fetch and real-data validation are
+> pending network egress to `www.mof.go.jp`.
 
 | Method | **Python (faithful)** | **Excel (transparent proxy)** |
 |---|---|---|

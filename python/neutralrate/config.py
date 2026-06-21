@@ -99,6 +99,42 @@ YIELD_CURVE_MATURITIES: dict[float, str] = {
 }
 
 # --------------------------------------------------------------------------- #
+# 1b. Full JGB constant-maturity curve (Ministry of Finance)
+# --------------------------------------------------------------------------- #
+# The natural-yield-curve methods (Imakubo 2015, Nakajima 2023, Goy-Iwasaki 2024,
+# Hatayama-Iwasaki 2024 / the "Del Negro" column) are built on a Nelson-Siegel
+# decomposition of the WHOLE JGB curve, not a single short/long pair.  The MoF
+# publishes the daily constant-maturity reference yields (jgbcm) since 1974 - the
+# authoritative source.  When this curve is available the term-structure methods
+# decompose it into level/slope/curvature (methods/_nelson_siegel.py); with only
+# the 3m/10y pair they fall back to the legacy midpoint.  See
+# docs/03_faithfulness_audit.md for why the full curve is the key fidelity fix.
+#
+# MOF_JGB_CURVE_SOURCE may be:
+#   - the MoF historical CSV URL (default below; Shift-JIS / cp932 encoded), or
+#   - a local CSV path (date + one column per maturity-year), e.g. a manual export.
+# NB: the live MoF endpoint is firewalled in some sandboxes (egress allowlist);
+# add www.mof.go.jp to the network policy, or point this at a local CSV.
+MOF_JGB_CURVE_SOURCE: str = (
+    "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
+)
+# Maturities (years) the MoF jgbcm file carries, in column order after the date.
+JGB_CURVE_MATURITIES: list[float] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 40,
+]
+# Build natural-yield-curve estimates from the full curve when its columns are
+# present in the panel; otherwise the 3m/10y fallback is used automatically.
+USE_FULL_CURVE: bool = True
+# Fixed Nelson-Siegel decay (per year) used to decompose the real curve.
+NELSON_SIEGEL_LAMBDA: float = 0.7
+
+
+def jgb_col(tau: float) -> str:
+    """Panel column name for the JGB yield at maturity `tau` years."""
+    return f"jgb_{int(tau)}y" if float(tau).is_integer() else f"jgb_{tau:g}y"
+
+
+# --------------------------------------------------------------------------- #
 # 2. Estimation settings
 # --------------------------------------------------------------------------- #
 TARGET_FREQ = "QS"          # quarter start; pandas offset alias

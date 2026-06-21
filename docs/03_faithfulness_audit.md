@@ -26,13 +26,26 @@ factors), several of them via a **shadow-rate** term-structure model to respect
 the zero lower bound. r\* is the short end of an estimated *natural yield curve*,
 and the term premium is a separate, separately-trending object.
 
-This toolkit fetches **only two maturities** — the 3-month interbank rate and the
-10-year JGB (`config.FRED_SERIES`; `YIELD_CURVE_MATURITIES = {0.25, 10.0}`) — and
-collapses them to a single midpoint that enters a scalar Laubach–Williams IS
-curve. With two points there is **no level/slope/curvature identification, no
-natural *curve*, and no term-premium trend**. Every term-structure method is
-therefore a *scalar proxy* of a *curve* model. This is the dominant structural
-gap in the project.
+Historically this toolkit fetched **only two maturities** — the 3-month
+interbank rate and the 10-year JGB — and collapsed them to a single midpoint in a
+scalar Laubach–Williams IS curve. With two points there is **no
+level/slope/curvature identification, no natural *curve*, and no term-premium
+trend**. Every term-structure method was therefore a *scalar proxy* of a *curve*
+model. This is the dominant structural gap in the project.
+
+> **Status update (curve scaffolding now in place).** The data layer and a
+> Nelson–Siegel engine have since been added: `config.MOF_JGB_CURVE_SOURCE` +
+> `data._fetch_mof_jgb` pull the **full MoF JGB constant-maturity curve**
+> (1–40y), `data.build_features` deflates it (maturity-matched expectations) and
+> decomposes it into level/slope/curvature via `methods/_nelson_siegel.py`, and
+> the four term-structure methods consume the fitted curve when it is present
+> (the 3m/10y midpoint remains the automatic fallback). What is **still
+> outstanding**: (i) the *live* MoF endpoint is egress-blocked in this sandbox,
+> so the curve currently runs on a synthetic full curve in the sample and has not
+> been validated on real data; (ii) the shadow-rate front end (ZLB) and the
+> affine no-arbitrage / common-trend-NS structures remain to be added for full
+> fidelity. So root cause A is now *architecturally addressed but not yet
+> validated on real data*.
 
 ### Root cause B — the structural models are collapsed to identities
 The DSGE (Okazaki–Sudo) and the common-trends VAR (Del Negro / Hatayama–Iwasaki)
@@ -213,26 +226,30 @@ faithful structural replications — that distinction is the substance of this a
 
 In dependency order:
 
-1. **Data layer (prerequisite for 4 of 6 methods).**
-   - Full JGB curve from MoF / FRED (1, 2, 5, 20, 30, 40y in addition to 3m/10y).
-   - Corporate–government spreads (for the US Del-Negro convenience yield).
-   - Investment, hours, real wages (Okazaki–Sudo DSGE observables).
-   - Survey expectations of *growth* (Del Negro).
-   - *Blocked now by egress; also requires extending `FRED_SERIES` /
-     `YIELD_CURVE_MATURITIES` and the synthetic sample.*
-2. **A Nelson–Siegel (+ shadow-rate) curve module** producing level/slope/
-   curvature factors, feeding methods 3–6 — turning them from scalar proxies into
-   genuine *natural-yield-curve* estimators.
+1. **Data layer (prerequisite for 4 of 6 methods).** — *JGB curve DONE
+   (scaffolded).*
+   - Full JGB curve from MoF: `config.MOF_JGB_CURVE_SOURCE`,
+     `JGB_CURVE_MATURITIES` (1–40y), `data._fetch_mof_jgb`; synthetic full curve
+     added to the sample via `scripts/add_curve_to_sample.py`. *Live fetch
+     pending egress (`www.mof.go.jp`) — point the source at a local CSV meanwhile.*
+   - Still missing: corporate–government spreads (US Del-Negro convenience
+     yield); investment, hours, real wages (Okazaki–Sudo DSGE); survey
+     expectations of *growth* (Del Negro).
+2. **A Nelson–Siegel curve module** producing level/slope/curvature factors,
+   feeding methods 3–6. — *DONE: `methods/_nelson_siegel.py`, wired through
+   `build_features`; methods consume the fitted curve with a 3m/10y fallback.*
+   Remaining: a **shadow-rate** front end (ZLB) for the deep-ZLB years.
 3. **Method-specific full estimators:** Okazaki–Sudo DSGE (model + Bayesian
    estimation); Goy–Iwasaki affine no-arbitrage term structure; Hatayama–Iwasaki /
-   Del Negro common-trends **Bayesian** VAR (MCMC + priors).
-4. **Real-data validation** vs. Chart 3 (`scripts/validate_vs_boj.py` already
-   maps the columns; it just needs a real-data run).
+   Del Negro common-trends **Bayesian** VAR (MCMC + priors). — *Not started;
+   the heaviest lift.*
+4. **Real-data validation** vs. Chart 3 (`scripts/validate_vs_boj.py` already maps
+   the columns; it just needs a real-data run once egress is opened).
 
-Until step 1 is unblocked, methods 3–6 cannot be made curve-based even in
-principle, and methods 2 & 6 additionally require estimation machinery and data
-beyond the current scope. That — not parameter calibration — is why the gaps
-exist.
+Steps 1–2 (the curve) are now implemented; with them the term-structure methods
+are genuinely curve-based when a full curve is supplied. What remains is real-data
+validation (egress) and the full structural estimators for methods 2 & 6. That —
+not parameter calibration — is why the residual gaps exist.
 
 ---
 

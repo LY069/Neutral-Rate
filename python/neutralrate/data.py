@@ -36,11 +36,17 @@ from .config import (
     INFLATION_EXPECTATION_WINDOW,
     INFLATION_EXPECTATIONS_LONG_SERIES,
     INFLATION_EXPECTATIONS_SERIES,
+    JGB_CURVE_MATURITIES,
+    MOF_JGB_CURVE_SOURCE,
+    NELSON_SIEGEL_LAMBDA,
     SAMPLE_END,
     SAMPLE_START,
     SETTINGS,
     TARGET_FREQ,
+    USE_FULL_CURVE,
+    jgb_col,
 )
+from .methods import _nelson_siegel as _ns
 
 FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
 FREDGRAPH_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
@@ -271,6 +277,69 @@ def _fetch_estat(spec: str, retries: int = 4) -> pd.Series:
     raise RuntimeError(f"e-Stat fetch failed for {spec}: {last_err}")
 
 
+def _fetch_mof_jgb(source: str, retries: int = 4) -> pd.DataFrame:
+    """Fetch the Ministry of Finance JGB constant-maturity curve (jgbcm).
+
+    `source` is either the MoF historical CSV URL (Shift-JIS / cp932 encoded) or
+    a local CSV path (a manual export, any common encoding).  Returns a DataFrame
+    indexed by date with one float column per maturity (in YEARS), values in %.
+
+    The MoF file has a one/two-line header then daily rows "date,1y,2y,...,40y"
+    with '-' for not-yet-issued maturities.  Parsing is deliberately tolerant
+    (the live layout is only checkable on a real run): any row whose first field
+    is a parseable date is taken as data and its yield fields are aligned BY
+    POSITION to config.JGB_CURVE_MATURITIES.
+
+    Raises on failure so the caller can warn and fall back to the 3m/10y pair.
+    """
+    def _read_text() -> str:
+        if os.path.exists(source):
+            for enc in ("cp932", "utf-8", "shift_jis"):
+                try:
+                    with open(source, encoding=enc) as fh:
+                        return fh.read()
+                except UnicodeDecodeError:
+                    continue
+            raise RuntimeError(f"could not decode local MoF file {source}")
+        last: Exception | None = None
+        for attempt in range(retries):
+            try:
+                r = requests.get(source, timeout=60,
+                                 headers={"User-Agent": "Mozilla/5.0 (neutralrate)"})
+                r.raise_for_status()
+                r.encoding = "cp932"          # MoF jgbcm is Shift-JIS
+                return r.text
+            except Exception as exc:          # noqa: BLE001
+                last = exc
+                time.sleep(2 ** attempt)
+        raise RuntimeError(f"MoF JGB fetch failed for {source}: {last}")
+
+    text = _read_text()
+    mats = [float(t) for t in JGB_CURVE_MATURITIES]
+    dates, recs = [], []
+    for line in text.splitlines():
+        fields = [c.strip() for c in line.split(",")]
+        if len(fields) < 2:
+            continue
+        dt = pd.to_datetime(fields[0].replace(".", "/"), errors="coerce")
+        if pd.isna(dt):
+            continue                          # header / metadata line
+        vals = []
+        for tok in fields[1:1 + len(mats)]:
+            tok = tok.replace("%", "")
+            vals.append(np.nan if tok in ("", "-", "*", "***") else
+                        pd.to_numeric(tok, errors="coerce"))
+        # pad/trim to the configured maturity count
+        vals = (vals + [np.nan] * len(mats))[:len(mats)]
+        dates.append(dt)
+        recs.append(vals)
+    if not recs:
+        raise RuntimeError(f"MoF JGB file {source} carried no parseable rows")
+    df = pd.DataFrame(recs, index=pd.DatetimeIndex(dates), columns=mats)
+    df = df.sort_index()[~df.index.duplicated(keep="last")]
+    return df
+
+
 def fetch_any(spec: str) -> pd.Series:
     """Load a series from any supported source, routed by the spec shape:
       * 'estat:STATSDATAID[:CDCAT01]'  -> Statistics Bureau of Japan (e-Stat API)
@@ -363,6 +432,23 @@ def fetch_raw_panel() -> pd.DataFrame:
 
     _try_expectations(INFLATION_EXPECTATIONS_SERIES, "inflation_expectations")
     _try_expectations(INFLATION_EXPECTATIONS_LONG_SERIES, "inflation_expectations_long")
+
+    # Full JGB constant-maturity curve (MoF) -> jgb_<m>y columns, quarterly.
+    # Best-effort: if the source is unreachable (e.g. egress-blocked) the
+    # term-structure methods fall back to the 3m/10y pair automatically.
+    if MOF_JGB_CURVE_SOURCE:
+        try:
+            jgb = _fetch_mof_jgb(MOF_JGB_CURVE_SOURCE)
+            for tau in JGB_CURVE_MATURITIES:
+                if float(tau) in jgb.columns:
+                    cols[jgb_col(tau)] = _to_quarterly(jgb[float(tau)], "rate_10y")
+            print(f"[neutralrate] JGB curve <- MoF jgbcm "
+                  f"({len([t for t in JGB_CURVE_MATURITIES if float(t) in jgb.columns])}"
+                  f" maturities, ends {jgb.index.max().date()})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[neutralrate] MoF JGB curve unavailable ({exc}); "
+                  f"term-structure methods use the 3m/10y fallback.")
+
     panel = pd.DataFrame(cols)
     if SAMPLE_END:
         panel = panel.loc[:SAMPLE_END]
@@ -520,6 +606,40 @@ def build_features(panel: pd.DataFrame) -> pd.DataFrame:
     df["real_short_exp"] = df["short_rate"] - df["exp_inflation"]
     df["real_3m_exp"] = df["rate_3m"] - df["exp_inflation"]
     df["real_10y_exp"] = df["rate_10y"] - df["exp_inflation_long"]
+
+    # --- Full real JGB curve + Nelson-Siegel factors --------------------- #
+    # When the MoF curve is present, deflate the WHOLE nominal curve by the
+    # anchored (long-horizon) expectation and decompose the real curve into
+    # level/slope/curvature.  These feed the natural-yield-curve methods; with
+    # fewer than 4 maturities they are skipped and the methods use the 3m/10y
+    # midpoint.  (Maturity-specific deflators are a later refinement; see
+    # docs/03_faithfulness_audit.md.)
+    jgb_cols = [(float(t), jgb_col(t)) for t in JGB_CURVE_MATURITIES
+                if jgb_col(t) in df.columns]
+    if USE_FULL_CURVE and len(jgb_cols) >= 4:
+        # Maturity-matched deflation (as in the originals' survey expectations):
+        # short maturities are deflated by the short-horizon expectation, long
+        # maturities by the long (anchored) one, interpolating linearly in
+        # maturity up to EXP_HORIZON years.  This keeps the fitted short end
+        # consistent with real_short_exp and the long end with real_10y_exp.
+        EXP_HORIZON = 5.0
+        pi_s, pi_l = df["exp_inflation"], df["exp_inflation_long"]
+        real_curve = pd.DataFrame(
+            {t: df[c] - (pi_s + (pi_l - pi_s) * min(t / EXP_HORIZON, 1.0))
+             for t, c in jgb_cols},
+            index=df.index)
+        for t, c in jgb_cols:
+            df[f"real_{c}"] = real_curve[t]
+        factors = _ns.fit_factors(real_curve, NELSON_SIEGEL_LAMBDA)
+        for name in _ns.FACTOR_NAMES:
+            df[name] = factors[name].reindex(df.index)
+        df["ns_real_short"] = _ns.evaluate(
+            factors, 0.25, NELSON_SIEGEL_LAMBDA).reindex(df.index)
+        df["ns_real_10y"] = _ns.evaluate(
+            factors, 10.0, NELSON_SIEGEL_LAMBDA).reindex(df.index)
+        df["ns_real_curve_mean"] = real_curve.mean(axis=1)
+        print(f"[neutralrate] Nelson-Siegel curve fitted on {len(jgb_cols)} "
+              f"real maturities (lambda={NELSON_SIEGEL_LAMBDA}).")
 
     return df
 

@@ -59,8 +59,16 @@ class DelNegroResult:
 
 def estimate(df: pd.DataFrame) -> DelNegroResult:
     d = df.copy()
+    # r* here is the trend of the SAFE POLICY short real rate, so the short
+    # observable stays the policy real rate.  The long observable is taken from
+    # the fitted Nelson-Siegel curve (the whole JGB curve, denoised - the object
+    # BoJ's actual Japan implementation, Hatayama-Iwasaki, decomposes) when
+    # available, else the raw real 10y.
     d["_rs"] = d["real_short_exp"] if "real_short_exp" in d else d["real_short_rate"]
-    d["_r10"] = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
+    if "ns_real_10y" in d and d["ns_real_10y"].notna().any():
+        d["_r10"] = d["ns_real_10y"]
+    else:
+        d["_r10"] = d["real_10y_exp"] if "real_10y_exp" in d else d["real_10y"]
     cols = ["_rs", "_r10", "gdp_growth", "inflation"]
     d = d.dropna(subset=cols)
     Y = d[cols].to_numpy()
